@@ -65,10 +65,9 @@ export class EmailService {
   }
 
   private async send(opts: { to: string; subject: string; html: string }) {
-    try {
-      await this.resend.emails.send({ from: this.from, ...opts });
-    } catch (err) {
-      this.logger.warn(`Email failed to ${opts.to}: ${(err as Error).message}`);
+    const { error } = await this.resend.emails.send({ from: this.from, ...opts });
+    if (error) {
+      this.logger.warn(`Email failed to ${opts.to}: ${error.message}`);
     }
   }
 }
