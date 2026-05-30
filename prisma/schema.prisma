@@ -1,0 +1,163 @@
+generator client {
+  provider        = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Auth.js required models
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?
+  full_name     String?
+  business_name String?
+  profession    String?
+  bio           String?
+  avatar_url    String?
+  timezone      String?   @default("UTC")
+  booking_url_slug           String?   @unique
+  buffer_minutes             Int       @default(0)
+  google_calendar_enabled    Boolean?  @default(false)
+  subscription_status        String?   @default("inactive")
+  stripe_customer_id         String?   @unique
+  stripe_subscription_id     String?   @unique
+  stripe_price_id            String?
+  stripe_current_period_end  DateTime?
+  stripe_subscription_status String?
+  has_used_free_trial        Boolean?  @default(false)
+  trial_start_date           DateTime? @db.Timestamptz(6)
+  trial_end_date             DateTime? @db.Timestamptz(6)
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime  @default(now()) @db.Timestamptz(6)
+
+  accounts      Account[]
+  appointments  appointments[]
+  blocked_time  blocked_time[]
+  google_tokens google_tokens?
+  services      services[]
+  working_hours working_hours[]
+
+  @@map("profiles")
+}
+
+model Account {
+  userId            String  @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model appointments {
+  id                    String         @id @db.Uuid
+  profile_id            String         @db.Uuid
+  service_id            String         @db.Uuid
+  client_name           String
+  client_email          String
+  client_phone          String?
+  client_timezone       String?
+  start_time            DateTime       @db.Timestamptz(6)
+  end_time              DateTime       @db.Timestamptz(6)
+  status                String         @default("pending")
+  notes                 String?
+  management_token      String         @db.Uuid
+  recurrence_pattern    String?
+  recurrence_end_date   DateTime?      @db.Date
+  parent_appointment_id String?        @db.Uuid
+  google_event_id       String?
+  google_meet_link      String?
+  created_at            DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime       @default(now()) @db.Timestamptz(6)
+  appointments          appointments?  @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
+  other_appointments    appointments[] @relation("appointmentsToappointments")
+  profiles              User           @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  services              services       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+}
+
+model google_tokens {
+  id                  String   @id @db.Uuid
+  user_id             String   @unique @db.Uuid
+  access_token        String
+  refresh_token       String?
+  expires_at          DateTime @db.Timestamptz(6)
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @default(now()) @db.Timestamptz(6)
+  next_sync_token     String?
+  webhook_channel_id  String?  @unique
+  webhook_resource_id String?
+  profiles            User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model services {
+  id               String         @id @db.Uuid
+  profile_id       String         @db.Uuid
+  description      String?
+  price            Decimal?       @db.Decimal
+  is_active        Boolean        @default(true)
+  created_at       DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime       @default(now()) @db.Timestamptz(6)
+  duration_minutes Int            @default(30)
+  name             String
+  appointments     appointments[]
+  profiles         User           @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+}
+
+model working_hours {
+  id          String   @id @db.Uuid
+  profile_id  String   @db.Uuid
+  day_of_week Int
+  start_time  DateTime @db.Time(6)
+  end_time    DateTime @db.Time(6)
+  is_enabled  Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  profiles    User     @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+}
+
+model blocked_time {
+  id         String   @id @default(uuid()) @db.Uuid
+  profile_id String   @db.Uuid
+  date       DateTime @db.Date
+  start_time DateTime @db.Time(6)
+  end_time   DateTime @db.Time(6)
+  reason     String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  profile    User     @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+
+  @@index([profile_id, date])
+}
+
+enum appointment_status {
+  pending
+  confirmed
+  cancelled
+  completed
+}
+
+enum subscription_status {
+  inactive
+  trialing
+  active
+  past_due
+  canceled
+}
