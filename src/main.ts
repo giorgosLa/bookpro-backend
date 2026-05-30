@@ -52,6 +52,22 @@ async function bootstrap() {
     logger.log(`Swagger docs → http://localhost:${port}/docs`);
   }
 
+  const fastify = app.getHttpAdapter().getInstance() as any;
+
+  fastify.addHook('onRequest', (request: any, _reply: any, done: () => void) => {
+    request.startTime = Date.now();
+    logger.log(`→ ${request.method} ${request.url}`);
+    done();
+  });
+
+  fastify.addHook('onResponse', (request: any, reply: any, done: () => void) => {
+    const ms = Date.now() - (request.startTime ?? Date.now());
+    const status = reply.statusCode;
+    const level = status >= 400 ? 'error' : 'log';
+    logger[level](`← ${request.method} ${request.url} ${status} (${ms}ms)`);
+    done();
+  });
+
   await app.listen(port, '0.0.0.0');
   logger.log(`API running → http://localhost:${port}/api/v1`);
 }
