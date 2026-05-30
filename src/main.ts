@@ -23,8 +23,15 @@ async function bootstrap() {
   await app.register(fastifyHelmet as any, { contentSecurityPolicy: false });
   await app.register(fastifyCompress as any);
 
+  const allowedOrigins = [
+    appUrl,
+    'http://localhost:3000',
+    'https://bookpro.gr',
+    'https://www.bookpro.gr',
+  ].filter(Boolean);
+
   app.enableCors({
-    origin: [appUrl, 'http://localhost:3000'],
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   });
