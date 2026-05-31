@@ -26,6 +26,12 @@ export class UpdateProfileDto {
   @MaxLength(500)
   bio?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  address?: string;
+
   @ApiPropertyOptional({ example: 'elite-barber' })
   @IsOptional()
   @IsString()

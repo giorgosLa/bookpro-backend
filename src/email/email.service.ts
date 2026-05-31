@@ -39,6 +39,29 @@ export class EmailService {
     });
   }
 
+  async sendCancellationNotificationToDoctor(opts: {
+    to: string;
+    doctorName: string;
+    clientName: string;
+    serviceName: string;
+    date: string;
+    time: string;
+  }) {
+    return this.send({
+      to: opts.to,
+      subject: `Ακύρωση ραντεβού – ${opts.clientName}`,
+      html: `
+        <h2>Ακύρωση ραντεβού</h2>
+        <p>Γεια σας ${opts.doctorName},</p>
+        <p>Ο/Η ασθενής <strong>${opts.clientName}</strong> ακύρωσε το ραντεβού του/της.</p>
+        <p><strong>Υπηρεσία:</strong> ${opts.serviceName}<br/>
+           <strong>Ημερομηνία:</strong> ${opts.date}<br/>
+           <strong>Ώρα:</strong> ${opts.time}</p>
+        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
+      `,
+    });
+  }
+
   async sendPasswordReset(opts: { to: string; name: string; resetLink: string }) {
     return this.send({
       to: opts.to,

@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/database/prisma.service';
 import { EmailService } from '@/email/email.service';
+import { EventsService } from '@/events/events.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
 import {
@@ -27,6 +28,7 @@ export class PublicService {
     private prisma: PrismaService,
     private email: EmailService,
     private config: ConfigService,
+    private events: EventsService,
   ) {}
 
   /** Returns all registered doctors who have a booking slug. Optionally filters by profession (case-insensitive). */
@@ -47,6 +49,7 @@ export class PublicService {
         avatar_url: true,
       },
       orderBy: { created_at: 'asc' },
+      take: 100,
     });
     return doctors;
   }
@@ -55,14 +58,23 @@ export class PublicService {
   async getProfile(slug: string) {
     const profile = await this.prisma.user.findUnique({
       where: { booking_url_slug: slug },
-      include: {
+      select: {
+        id: true,
+        full_name: true,
+        business_name: true,
+        profession: true,
+        bio: true,
+        address: true,
+        avatar_url: true,
+        timezone: true,
+        booking_url_slug: true,
+        buffer_minutes: true,
         services: { where: { is_active: true } },
         working_hours: true,
       },
     });
     if (!profile) throw new NotFoundException('Profile not found');
-    const { password, ...safe } = profile as any;
-    return safe;
+    return profile;
   }
 
   /**
@@ -82,7 +94,7 @@ export class PublicService {
     const dayStart = startOfDay(selectedDate);
     const dayEnd = endOfDay(selectedDate);
 
-    const [blockedTimes, appointments] = await Promise.all([
+    const [blockedTimes, appointments, profile] = await Promise.all([
       this.prisma.blocked_time.findMany({
         where: {
           profile_id: profileId,
@@ -99,9 +111,11 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true } }),
     ]);
 
-    return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr);
+    const timezone = profile?.timezone ?? 'UTC';
+    return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone);
   }
 
   /**
@@ -109,11 +123,16 @@ export class PublicService {
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
    */
   async createBooking(dto: CreateBookingDto) {
-    const service = await this.prisma.services.findUnique({ where: { id: dto.serviceId } });
+    const service = await this.prisma.services.findUnique({
+      where: { id: dto.serviceId, profile_id: dto.profileId },
+    });
     if (!service) throw new BadRequestException('Service not found');
 
     const startTime = new Date(`${dto.date}T${dto.time}:00`);
+    if (startTime < new Date()) throw new BadRequestException('Cannot book a slot in the past');
     const endTime = addMinutes(startTime, service.duration_minutes);
+
+    await this.validateWithinWorkingHours(dto.profileId, startTime, endTime);
 
     const appointment = await this.prisma.$transaction(
       async (tx) => {
@@ -147,6 +166,23 @@ export class PublicService {
       { isolationLevel: 'Serializable' },
     );
 
+    // Push real-time notification to the doctor's SSE stream (fire-and-forget)
+    this.events.emit(appointment.profile_id, {
+      id: appointment.id,
+      profile_id: appointment.profile_id,
+      service_id: appointment.service_id,
+      client_name: appointment.client_name,
+      client_email: appointment.client_email,
+      client_phone: appointment.client_phone,
+      client_timezone: appointment.client_timezone,
+      start_time: appointment.start_time,
+      end_time: appointment.end_time,
+      status: appointment.status,
+      notes: appointment.notes,
+      management_token: appointment.management_token,
+      services: (appointment as any).services,
+    });
+
     const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
     this.email
       .sendBookingConfirmation({
@@ -166,9 +202,21 @@ export class PublicService {
 
   /** Looks up a booking by its management token (included in confirmation emails for self-service actions). */
   async getBookingByToken(token: string) {
-    const appt = await this.prisma.appointments.findFirst({
+    const appt = await this.prisma.appointments.findUnique({
       where: { management_token: token },
-      include: { services: true, profiles: true },
+      include: {
+        services: true,
+        profiles: {
+          select: {
+            id: true,
+            full_name: true,
+            business_name: true,
+            profession: true,
+            avatar_url: true,
+            booking_url_slug: true,
+          },
+        },
+      },
     });
     if (!appt) throw new NotFoundException('Booking not found');
     return appt;
@@ -176,20 +224,41 @@ export class PublicService {
 
   /** Cancels a booking via management token (client self-service, no auth required). */
   async cancelBooking(token: string) {
-    const appt = await this.prisma.appointments.findFirst({ where: { management_token: token } });
+    const appt = await this.prisma.appointments.findUnique({
+      where: { management_token: token },
+      include: {
+        services: true,
+        profiles: { select: { email: true, full_name: true, business_name: true } },
+      },
+    });
     if (!appt) throw new NotFoundException('Booking not found');
     if (appt.status === 'cancelled') throw new BadRequestException('Already cancelled');
 
     await this.prisma.appointments.update({
       where: { id: appt.id },
-      data: { status: 'cancelled', updated_at: new Date() },
+      data: { status: 'cancelled', cancelled_by: 'client', updated_at: new Date() },
     });
+
+    const profile = appt.profiles as any;
+    const date = appt.start_time.toISOString().substring(0, 10);
+    const time = appt.start_time.toISOString().substring(11, 16);
+    this.email
+      .sendCancellationNotificationToDoctor({
+        to: profile.email,
+        doctorName: profile.full_name ?? profile.business_name ?? 'Γιατρέ',
+        clientName: appt.client_name,
+        serviceName: appt.services.name,
+        date,
+        time,
+      })
+      .catch(() => null);
+
     return { message: 'Booking cancelled' };
   }
 
   /** Reschedules a booking via management token. Checks for conflicts at the new slot before saving. */
   async rescheduleBooking(token: string, dto: RescheduleBookingDto) {
-    const appt = await this.prisma.appointments.findFirst({
+    const appt = await this.prisma.appointments.findUnique({
       where: { management_token: token },
       include: { services: true },
     });
@@ -197,7 +266,10 @@ export class PublicService {
     if (appt.status === 'cancelled') throw new BadRequestException('Cannot reschedule a cancelled booking');
 
     const newStart = new Date(`${dto.date}T${dto.time}:00`);
+    if (newStart < new Date()) throw new BadRequestException('Cannot reschedule to a slot in the past');
     const newEnd = addMinutes(newStart, appt.services.duration_minutes);
+
+    await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd);
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -231,12 +303,10 @@ export class PublicService {
     const baseDate = this.parseDate(baseDateStr);
     const MAX = 20;
     const REQUIRED = 3;
-    const today = startOfDay(toZonedTime(new Date(), 'Europe/Athens'));
-
     const searchStart = subHours(startOfDay(addDays(baseDate, -MAX)), 12);
     const searchEnd = addHours(endOfDay(addDays(baseDate, MAX)), 12);
 
-    const [workingHours, blockedTimes, appointments] = await Promise.all([
+    const [workingHours, blockedTimes, appointments, profile] = await Promise.all([
       this.prisma.working_hours.findMany({ where: { profile_id: profileId, is_enabled: true } }),
       this.prisma.blocked_time.findMany({
         where: { profile_id: profileId, date: { gte: searchStart, lte: searchEnd } },
@@ -249,12 +319,16 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true } }),
     ]);
+
+    const timezone = profile?.timezone ?? 'UTC';
+    const today = startOfDay(toZonedTime(new Date(), timezone));
 
     const hasSlots = (d: Date) => {
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
       if (!wh) return false;
-      const slots = this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'));
+      const slots = this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone);
       return slots.length > 0;
     };
 
@@ -288,14 +362,15 @@ export class PublicService {
     appointments: any[],
     duration: number,
     dateStr: string,
+    timezone: string = 'UTC',
   ): string[] {
-    const [startH, startM] = wh.start_time.toISOString().substr(11, 5).split(':').map(Number);
-    const [endH, endM] = wh.end_time.toISOString().substr(11, 5).split(':').map(Number);
+    const [startH, startM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
+    const [endH, endM] = wh.end_time.toISOString().substring(11, 16).split(':').map(Number);
 
     let current = new Date(date);
     current.setHours(startH, startM, 0, 0);
 
-    const athensNow = toZonedTime(new Date(), 'Europe/Athens');
+    const athensNow = toZonedTime(new Date(), timezone);
     if (dateStr === format(athensNow, 'yyyy-MM-dd')) {
       const nowOnDate = new Date(date);
       nowOnDate.setHours(athensNow.getHours(), athensNow.getMinutes(), 0, 0);
@@ -336,6 +411,34 @@ export class PublicService {
       current = addMinutes(current, 30);
     }
     return slots;
+  }
+
+  /** Throws if startTime–endTime falls outside the doctor's working hours for that day. */
+  private async validateWithinWorkingHours(profileId: string, startTime: Date, endTime: Date): Promise<void> {
+    const wh = await this.prisma.working_hours.findFirst({
+      where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true },
+    });
+    if (!wh) throw new BadRequestException('Doctor does not work on this day');
+
+    const [openH, openM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
+    const [closeH, closeM] = wh.end_time.toISOString().substring(11, 16).split(':').map(Number);
+
+    const open = new Date(startTime); open.setHours(openH, openM, 0, 0);
+    const close = new Date(startTime); close.setHours(closeH, closeM, 0, 0);
+
+    if (startTime < open || endTime > close) {
+      throw new BadRequestException('Requested time is outside working hours');
+    }
+  }
+
+  /** Resolves a booking slug to a profile id without fetching the full profile. */
+  async resolveProfileId(slug: string): Promise<string> {
+    const profile = await this.prisma.user.findUnique({
+      where: { booking_url_slug: slug },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Profile not found');
+    return profile.id;
   }
 
   /** Parses a YYYY-MM-DD string as a local Date without timezone offset issues. */

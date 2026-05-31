@@ -22,11 +22,13 @@ export class CreateBookingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(30)
   clientPhone?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   clientTimezone?: string;
 
   @ApiProperty({ example: '2026-06-15' })
@@ -36,11 +38,12 @@ export class CreateBookingDto {
 
   @ApiProperty({ example: '10:00' })
   @IsString()
-  @Matches(/^\d{2}:\d{2}$/)
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
   time: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   notes?: string;
 }

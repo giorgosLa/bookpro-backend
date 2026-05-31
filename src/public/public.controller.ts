@@ -42,8 +42,8 @@ export class PublicController {
     @Query('date') date: string,
     @Query('duration') duration: number,
   ) {
-    const profile = await this.publicService.getProfile(slug);
-    return this.publicService.getSlots(profile.id, date, Number(duration));
+    const profileId = await this.publicService.resolveProfileId(slug);
+    return this.publicService.getSlots(profileId, date, Number(duration));
   }
 
   @Get('profile/:slug/nearest-dates')
@@ -55,8 +55,8 @@ export class PublicController {
     @Query('baseDate') baseDate: string,
     @Query('duration') duration: number,
   ) {
-    const profile = await this.publicService.getProfile(slug);
-    return this.publicService.findNearestDates(profile.id, baseDate, Number(duration));
+    const profileId = await this.publicService.resolveProfileId(slug);
+    return this.publicService.findNearestDates(profileId, baseDate, Number(duration));
   }
 
   @Post('bookings')

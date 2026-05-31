@@ -37,10 +37,10 @@ export class AvailabilityService {
     return this.getSchedule(userId);
   }
 
-  /** Returns all blocked time slots for a doctor, ordered by date then start time. */
+  /** Returns future blocked time slots for a doctor (today onwards), ordered by date then start time. */
   getBlockedTimes(userId: string) {
     return this.prisma.blocked_time.findMany({
-      where: { profile_id: userId },
+      where: { profile_id: userId, date: { gte: new Date() } },
       orderBy: [{ date: 'asc' }, { start_time: 'asc' }],
     });
   }

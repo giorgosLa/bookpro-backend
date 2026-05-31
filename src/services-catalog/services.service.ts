@@ -55,7 +55,10 @@ export class ServicesCatalogService {
 
   /** Throws NotFoundException or ForbiddenException if the service doesn't belong to the user. */
   private async assertOwnership(userId: string, serviceId: string) {
-    const service = await this.prisma.services.findUnique({ where: { id: serviceId } });
+    const service = await this.prisma.services.findUnique({
+      where: { id: serviceId },
+      select: { profile_id: true },
+    });
     if (!service) throw new NotFoundException('Service not found');
     if (service.profile_id !== userId) throw new ForbiddenException();
   }

@@ -32,6 +32,7 @@ export class UsersService {
         full_name: dto.fullName,
         profession: dto.profession,
         bio: dto.bio,
+        address: dto.address,
         booking_url_slug: dto.bookingUrlSlug,
         timezone: dto.timezone,
         buffer_minutes: dto.bufferMinutes,

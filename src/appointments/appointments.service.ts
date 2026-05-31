@@ -1,67 +1,57 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
-import { CalendarSyncService } from '@/calendar/calendar-sync.service';
+import { subDays } from 'date-fns';
 
 @Injectable()
 export class AppointmentsService {
-  constructor(
-    private prisma: PrismaService,
-    private calendarSync: CalendarSyncService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
-  /** Returns all appointments for a doctor, sorted newest first, with their service details. */
   async findAll(userId: string) {
-    return this.prisma.appointments.findMany({
-      where: { profile_id: userId },
-      include: { services: true },
-      orderBy: { start_time: 'desc' },
-    });
+    const now = new Date();
+    const ninetyDaysAgo = subDays(now, 90);
+
+    const [upcoming, past] = await Promise.all([
+      this.prisma.appointments.findMany({
+        where: { profile_id: userId, start_time: { gte: now } },
+        include: { services: true },
+        orderBy: { start_time: 'asc' },
+      }),
+      this.prisma.appointments.findMany({
+        where: { profile_id: userId, start_time: { lt: now, gte: ninetyDaysAgo } },
+        include: { services: true },
+        orderBy: { start_time: 'desc' },
+      }),
+    ]);
+
+    return [...upcoming, ...past];
   }
 
-  /**
-   * Updates the status of an appointment (e.g. confirmed, cancelled, completed).
-   * Verifies that the appointment belongs to the requesting user.
-   * Fires a Google Calendar sync after status change (errors are swallowed).
-   */
   async updateStatus(userId: string, appointmentId: string, dto: UpdateStatusDto) {
     const appt = await this.prisma.appointments.findUnique({
       where: { id: appointmentId },
-      include: { services: true },
     });
     if (!appt) throw new NotFoundException('Appointment not found');
     if (appt.profile_id !== userId) throw new ForbiddenException();
 
     const updated = await this.prisma.appointments.update({
       where: { id: appointmentId },
-      data: { status: dto.status, updated_at: new Date() },
+      data: {
+        status: dto.status,
+        cancelled_by: dto.status === 'cancelled' ? 'doctor' : null,
+        updated_at: new Date(),
+      },
       include: { services: true },
     });
 
-    this.syncWithGoogle(userId, updated).catch(() => null);
+    if (dto.status === 'cancelled') {
+      setTimeout(() => {
+        this.prisma.appointments
+          .delete({ where: { id: appointmentId } })
+          .catch(() => null);
+      }, 2000);
+    }
 
     return updated;
-  }
-
-  /**
-   * Manually triggers a Google Calendar sync for a specific appointment.
-   * Used when automatic sync failed or when the doctor enables Calendar after booking.
-   */
-  async syncToGoogle(userId: string, appointmentId: string) {
-    const appt = await this.prisma.appointments.findUnique({
-      where: { id: appointmentId },
-      include: { services: true },
-    });
-    if (!appt) throw new NotFoundException('Appointment not found');
-    if (appt.profile_id !== userId) throw new ForbiddenException();
-    await this.syncWithGoogle(userId, appt);
-    return { message: 'Synced with Google Calendar' };
-  }
-
-  /** Skips silently if the doctor has not enabled Google Calendar integration. */
-  private async syncWithGoogle(userId: string, appt: any) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user?.google_calendar_enabled) return;
-    await this.calendarSync.syncAppointment(userId, appt);
   }
 }

@@ -1,70 +1,96 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
-import { subDays, format } from 'date-fns';
+import { subDays, startOfDay, format } from 'date-fns';
 
 @Injectable()
 export class AnalyticsService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Aggregates analytics for a doctor's dashboard:
-   * - totalRevenue: sum of prices for completed appointments
-   * - completionRate: % of appointments that reached "completed" status
-   * - uniqueClients: distinct client emails across confirmed/completed appointments
-   * - dailyStats: bookings and revenue per day for the last 30 days
-   * - serviceDistribution: booking count grouped by service name
+   * Aggregates analytics for a doctor's dashboard.
+   * Uses parallel targeted queries instead of a full table scan:
+   * - counts via COUNT (no data transfer)
+   * - revenue via small projection on completed only
+   * - unique clients via DISTINCT
+   * - daily stats via date-filtered fetch (last 30 days only)
+   * - service distribution via GROUP BY
    */
   async getData(userId: string) {
-    const appointments = await this.prisma.appointments.findMany({
-      where: { profile_id: userId },
-      include: { services: true },
-      orderBy: { start_time: 'asc' },
-    });
+    const thirtyDaysAgo = startOfDay(subDays(new Date(), 29));
 
-    const completed = appointments.filter((a) => a.status === 'completed');
-    const active = appointments.filter((a) => ['confirmed', 'completed'].includes(a.status));
+    const [
+      totalBookings,
+      completedCount,
+      completedWithPrice,
+      uniqueClientsResult,
+      recentAppointments,
+      serviceGroups,
+      serviceNames,
+    ] = await Promise.all([
+      this.prisma.appointments.count({
+        where: { profile_id: userId },
+      }),
+      this.prisma.appointments.count({
+        where: { profile_id: userId, status: 'completed' },
+      }),
+      this.prisma.appointments.findMany({
+        where: { profile_id: userId, status: 'completed' },
+        select: { services: { select: { price: true } } },
+      }),
+      this.prisma.appointments.findMany({
+        where: { profile_id: userId, status: { in: ['confirmed', 'completed'] } },
+        select: { client_email: true },
+        distinct: ['client_email'],
+      }),
+      this.prisma.appointments.findMany({
+        where: { profile_id: userId, start_time: { gte: thirtyDaysAgo } },
+        select: { start_time: true, status: true, services: { select: { price: true } } },
+        orderBy: { start_time: 'asc' },
+      }),
+      this.prisma.appointments.groupBy({
+        by: ['service_id'],
+        where: { profile_id: userId },
+        _count: { id: true },
+      }),
+      this.prisma.services.findMany({
+        where: { profile_id: userId },
+        select: { id: true, name: true },
+      }),
+    ]);
 
-    const totalRevenue = completed.reduce(
+    const totalRevenue = completedWithPrice.reduce(
       (sum, a) => sum + Number(a.services?.price ?? 0),
       0,
     );
 
     const completionRate =
-      appointments.length > 0
-        ? Math.round((completed.length / appointments.length) * 100)
-        : 0;
+      totalBookings > 0 ? Math.round((completedCount / totalBookings) * 100) : 0;
 
-    const uniqueClients = new Set(active.map((a) => a.client_email)).size;
-
+    // Build daily buckets in a single O(n) pass
+    const dailyMap = new Map<string, { bookings: number; revenue: number }>();
+    for (const a of recentAppointments) {
+      const date = a.start_time.toISOString().substring(0, 10);
+      if (!dailyMap.has(date)) dailyMap.set(date, { bookings: 0, revenue: 0 });
+      const entry = dailyMap.get(date)!;
+      entry.bookings++;
+      if (a.status === 'completed') entry.revenue += Number(a.services?.price ?? 0);
+    }
     const last30Days = Array.from({ length: 30 }, (_, i) => {
       const date = format(subDays(new Date(), 29 - i), 'yyyy-MM-dd');
-      const dayAppts = appointments.filter(
-        (a) => format(new Date(a.start_time), 'yyyy-MM-dd') === date,
-      );
-      return {
-        date,
-        bookings: dayAppts.length,
-        revenue: dayAppts
-          .filter((a) => a.status === 'completed')
-          .reduce((s, a) => s + Number(a.services?.price ?? 0), 0),
-      };
+      return { date, ...(dailyMap.get(date) ?? { bookings: 0, revenue: 0 }) };
     });
 
-    const serviceMap = new Map<string, number>();
-    appointments.forEach((a) => {
-      const name = a.services?.name ?? 'Unknown';
-      serviceMap.set(name, (serviceMap.get(name) ?? 0) + 1);
-    });
-    const serviceDistribution = Array.from(serviceMap.entries()).map(([name, count]) => ({
-      name,
-      count,
+    const serviceNameMap = new Map(serviceNames.map((s) => [s.id, s.name]));
+    const serviceDistribution = serviceGroups.map((g) => ({
+      name: serviceNameMap.get(g.service_id) ?? 'Unknown',
+      count: g._count.id,
     }));
 
     return {
       totalRevenue,
-      totalBookings: appointments.length,
+      totalBookings,
       completionRate,
-      uniqueClients,
+      uniqueClients: uniqueClientsResult.length,
       dailyStats: last30Days,
       serviceDistribution,
     };

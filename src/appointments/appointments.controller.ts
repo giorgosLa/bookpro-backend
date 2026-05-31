@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Body, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Patch, Body, Param, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -24,11 +24,5 @@ export class AppointmentsController {
     @Body() dto: UpdateStatusDto,
   ) {
     return this.appointmentsService.updateStatus(user.id, id, dto);
-  }
-
-  @Post(':id/sync')
-  @ApiOperation({ summary: 'Sync appointment to Google Calendar' })
-  syncToGoogle(@CurrentUser() user: { id: string }, @Param('id', ParseUUIDPipe) id: string) {
-    return this.appointmentsService.syncToGoogle(user.id, id);
   }
 }

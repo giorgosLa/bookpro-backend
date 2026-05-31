@@ -27,7 +27,10 @@ export class AuthService {
 
   /** Validates email/password and returns a new access + refresh token pair. */
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      select: { id: true, email: true, password: true },
+    });
     if (!user || !user.password) throw new UnauthorizedException('Invalid credentials');
 
     const valid = await bcrypt.compare(dto.password, user.password);
@@ -40,14 +43,19 @@ export class AuthService {
    * Creates a new user account.
    * Generates a unique booking_url_slug from the business name,
    * appending a random 4-digit suffix if the slug is already taken.
+   * Email check, slug check, and password hashing run in parallel.
    */
   async signup(dto: SignupDto) {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const baseSlug = dto.businessName.toLowerCase().trim().replace(/\s+/g, '-');
+
+    const [existing, slugExists, hashed] = await Promise.all([
+      this.prisma.user.findUnique({ where: { email: dto.email }, select: { id: true } }),
+      this.prisma.user.findUnique({ where: { booking_url_slug: baseSlug }, select: { id: true } }),
+      bcrypt.hash(dto.password, 10),
+    ]);
+
     if (existing) throw new ConflictException('Email already in use');
 
-    const hashed = await bcrypt.hash(dto.password, 12);
-    const baseSlug = dto.businessName.toLowerCase().trim().replace(/\s+/g, '-');
-    const slugExists = await this.prisma.user.findUnique({ where: { booking_url_slug: baseSlug } });
     const slug = slugExists ? `${baseSlug}-${Math.floor(Math.random() * 9000) + 1000}` : baseSlug;
 
     const user = await this.prisma.user.create({
@@ -58,6 +66,7 @@ export class AuthService {
         booking_url_slug: slug,
         role: dto.role ?? 'DOCTOR',
       },
+      select: { id: true, email: true },
     });
 
     return this.issueTokens(user.id, user.email);
@@ -65,7 +74,10 @@ export class AuthService {
 
   /** Issues a fresh token pair for an existing user (called after refresh token validation). */
   async refresh(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true },
+    });
     if (!user) throw new UnauthorizedException();
     return this.issueTokens(user.id, user.email);
   }
