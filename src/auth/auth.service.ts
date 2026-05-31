@@ -25,6 +25,7 @@ export class AuthService {
     private email: EmailService,
   ) {}
 
+  /** Validates email/password and returns a new access + refresh token pair. */
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (!user || !user.password) throw new UnauthorizedException('Invalid credentials');
@@ -35,6 +36,11 @@ export class AuthService {
     return this.issueTokens(user.id, user.email);
   }
 
+  /**
+   * Creates a new user account.
+   * Generates a unique booking_url_slug from the business name,
+   * appending a random 4-digit suffix if the slug is already taken.
+   */
   async signup(dto: SignupDto) {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already in use');
@@ -50,18 +56,25 @@ export class AuthService {
         password: hashed,
         business_name: dto.businessName,
         booking_url_slug: slug,
+        role: dto.role ?? 'DOCTOR',
       },
     });
 
     return this.issueTokens(user.id, user.email);
   }
 
+  /** Issues a fresh token pair for an existing user (called after refresh token validation). */
   async refresh(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
     return this.issueTokens(user.id, user.email);
   }
 
+  /**
+   * Sends a password reset email.
+   * Deletes any existing token for the email before creating a new one (1-hour expiry).
+   * Returns silently if the email doesn't exist — avoids user enumeration.
+   */
   async forgotPassword(email: string): Promise<void> {
     this.logger.log(`[forgot-password] Looking up user: ${email}`);
     const user = await this.prisma.user.findUnique({ where: { email } });
@@ -92,6 +105,10 @@ export class AuthService {
     this.logger.log(`[forgot-password] Done`);
   }
 
+  /**
+   * Resets a user's password using a single-use token.
+   * Validates token existence and expiry, then deletes it after use to prevent reuse.
+   */
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const record = await this.prisma.verificationToken.findFirst({ where: { token } });
 
@@ -109,6 +126,7 @@ export class AuthService {
     });
   }
 
+  /** Signs and returns an access token (15m) and a refresh token (7d). */
   private issueTokens(userId: string, email: string) {
     const payload = { sub: userId, email };
     const accessToken = this.jwt.sign(payload, {
@@ -120,6 +138,7 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  /** Verifies the refresh token signature and returns the user ID (sub claim). */
   async validateRefreshToken(token: string): Promise<string> {
     try {
       const payload = this.jwt.verify<{ sub: string }>(token, {

@@ -12,6 +12,7 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   password      String?
+  role          UserRole  @default(DOCTOR)
   full_name     String?
   business_name String?
   profession    String?
@@ -160,4 +161,9 @@ enum subscription_status {
   active
   past_due
   canceled
+}
+
+enum UserRole {
+  DOCTOR
+  PATIENT
 }

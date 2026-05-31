@@ -10,6 +10,7 @@ export class AppointmentsService {
     private calendarSync: CalendarSyncService,
   ) {}
 
+  /** Returns all appointments for a doctor, sorted newest first, with their service details. */
   async findAll(userId: string) {
     return this.prisma.appointments.findMany({
       where: { profile_id: userId },
@@ -18,6 +19,11 @@ export class AppointmentsService {
     });
   }
 
+  /**
+   * Updates the status of an appointment (e.g. confirmed, cancelled, completed).
+   * Verifies that the appointment belongs to the requesting user.
+   * Fires a Google Calendar sync after status change (errors are swallowed).
+   */
   async updateStatus(userId: string, appointmentId: string, dto: UpdateStatusDto) {
     const appt = await this.prisma.appointments.findUnique({
       where: { id: appointmentId },
@@ -37,6 +43,10 @@ export class AppointmentsService {
     return updated;
   }
 
+  /**
+   * Manually triggers a Google Calendar sync for a specific appointment.
+   * Used when automatic sync failed or when the doctor enables Calendar after booking.
+   */
   async syncToGoogle(userId: string, appointmentId: string) {
     const appt = await this.prisma.appointments.findUnique({
       where: { id: appointmentId },
@@ -48,6 +58,7 @@ export class AppointmentsService {
     return { message: 'Synced with Google Calendar' };
   }
 
+  /** Skips silently if the doctor has not enabled Google Calendar integration. */
   private async syncWithGoogle(userId: string, appt: any) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.google_calendar_enabled) return;

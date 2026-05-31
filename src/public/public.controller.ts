@@ -20,6 +20,13 @@ import { Public } from '@/common/decorators/public.decorator';
 export class PublicController {
   constructor(private readonly publicService: PublicService) {}
 
+  @Get('doctors')
+  @ApiOperation({ summary: 'List all registered doctors' })
+  @ApiQuery({ name: 'profession', required: false })
+  getDoctors(@Query('profession') profession?: string) {
+    return this.publicService.getDoctors(profession);
+  }
+
   @Get('profile/:slug')
   @ApiOperation({ summary: 'Get public profile by booking URL slug' })
   getProfile(@Param('slug') slug: string) {

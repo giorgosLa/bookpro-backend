@@ -1,8 +1,9 @@
-import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsEmail, IsString, MinLength, MaxLength, IsEnum, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 
 export class SignupDto {
-  @ApiProperty({ example: 'Elite Barber' })
+  @ApiProperty({ example: 'Δρ. Παπαδόπουλος' })
   @IsString()
   @MinLength(2)
   @MaxLength(100)
@@ -16,4 +17,9 @@ export class SignupDto {
   @IsString()
   @MinLength(8)
   password: string;
+
+  @ApiPropertyOptional({ enum: UserRole, default: UserRole.DOCTOR })
+  @IsOptional()
+  @IsEnum(UserRole)
+  role?: UserRole;
 }

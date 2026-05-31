@@ -29,6 +29,29 @@ export class PublicService {
     private config: ConfigService,
   ) {}
 
+  /** Returns all registered doctors who have a booking slug. Optionally filters by profession (case-insensitive). */
+  async getDoctors(profession?: string) {
+    const doctors = await this.prisma.user.findMany({
+      where: {
+        role: 'DOCTOR',
+        booking_url_slug: { not: null },
+        ...(profession ? { profession: { contains: profession, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        id: true,
+        business_name: true,
+        full_name: true,
+        profession: true,
+        bio: true,
+        booking_url_slug: true,
+        avatar_url: true,
+      },
+      orderBy: { created_at: 'asc' },
+    });
+    return doctors;
+  }
+
+  /** Returns a doctor's public profile (with active services and working hours) by booking slug. */
   async getProfile(slug: string) {
     const profile = await this.prisma.user.findUnique({
       where: { booking_url_slug: slug },
@@ -42,6 +65,11 @@ export class PublicService {
     return safe;
   }
 
+  /**
+   * Returns available HH:mm time slots for a given date and service duration.
+   * Returns [] if the doctor doesn't work on that day.
+   * excludeId skips an existing appointment (used during reschedule).
+   */
   async getSlots(profileId: string, dateStr: string, durationMinutes: number, excludeId?: string) {
     const selectedDate = this.parseDate(dateStr);
     const dayOfWeek = selectedDate.getDay();
@@ -76,6 +104,10 @@ export class PublicService {
     return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr);
   }
 
+  /**
+   * Creates a guest booking inside a SERIALIZABLE transaction to prevent double-booking.
+   * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
+   */
   async createBooking(dto: CreateBookingDto) {
     const service = await this.prisma.services.findUnique({ where: { id: dto.serviceId } });
     if (!service) throw new BadRequestException('Service not found');
@@ -132,6 +164,7 @@ export class PublicService {
     return { success: true, appointmentId: appointment.id };
   }
 
+  /** Looks up a booking by its management token (included in confirmation emails for self-service actions). */
   async getBookingByToken(token: string) {
     const appt = await this.prisma.appointments.findFirst({
       where: { management_token: token },
@@ -141,6 +174,7 @@ export class PublicService {
     return appt;
   }
 
+  /** Cancels a booking via management token (client self-service, no auth required). */
   async cancelBooking(token: string) {
     const appt = await this.prisma.appointments.findFirst({ where: { management_token: token } });
     if (!appt) throw new NotFoundException('Booking not found');
@@ -153,6 +187,7 @@ export class PublicService {
     return { message: 'Booking cancelled' };
   }
 
+  /** Reschedules a booking via management token. Checks for conflicts at the new slot before saving. */
   async rescheduleBooking(token: string, dto: RescheduleBookingDto) {
     const appt = await this.prisma.appointments.findFirst({
       where: { management_token: token },
@@ -164,23 +199,34 @@ export class PublicService {
     const newStart = new Date(`${dto.date}T${dto.time}:00`);
     const newEnd = addMinutes(newStart, appt.services.duration_minutes);
 
-    const conflict = await this.prisma.appointments.findFirst({
-      where: {
-        profile_id: appt.profile_id,
-        status: { in: ['pending', 'confirmed'] },
-        id: { not: appt.id },
-        AND: [{ start_time: { lt: newEnd } }, { end_time: { gt: newStart } }],
-      },
-    });
-    if (conflict) throw new ConflictException('This time slot is not available');
+    await this.prisma.$transaction(
+      async (tx) => {
+        const conflict = await tx.appointments.findFirst({
+          where: {
+            profile_id: appt.profile_id,
+            status: { in: ['pending', 'confirmed'] },
+            id: { not: appt.id },
+            AND: [{ start_time: { lt: newEnd } }, { end_time: { gt: newStart } }],
+          },
+        });
+        if (conflict) throw new ConflictException('This time slot is not available');
 
-    await this.prisma.appointments.update({
-      where: { id: appt.id },
-      data: { start_time: newStart, end_time: newEnd, updated_at: new Date() },
-    });
+        await tx.appointments.update({
+          where: { id: appt.id },
+          data: { start_time: newStart, end_time: newEnd, updated_at: new Date() },
+        });
+      },
+      { isolationLevel: 'Serializable' },
+    );
+
     return { message: 'Booking rescheduled' };
   }
 
+  /**
+   * Finds up to 3 available dates before and after a base date (within ±20 days).
+   * Used by the booking wizard to surface smart date suggestions when a day has no slots.
+   * Fetches all data once and runs slot computation in-memory to avoid N+1 queries.
+   */
   async findNearestDates(profileId: string, baseDateStr: string, durationMinutes: number) {
     const baseDate = this.parseDate(baseDateStr);
     const MAX = 20;
@@ -230,6 +276,11 @@ export class PublicService {
     return { nextDates, prevDates: prevDates.sort() };
   }
 
+  /**
+   * Core slot computation: generates every 30-minute slot within working hours,
+   * skips slots that overlap with booked appointments or blocked times,
+   * and skips past slots when the requested date is today (Athens timezone).
+   */
   private computeSlots(
     date: Date,
     wh: any,
@@ -287,6 +338,7 @@ export class PublicService {
     return slots;
   }
 
+  /** Parses a YYYY-MM-DD string as a local Date without timezone offset issues. */
   private parseDate(dateStr: string): Date {
     const [y, m, d] = dateStr.split('-').map(Number);
     return new Date(y, m - 1, d);

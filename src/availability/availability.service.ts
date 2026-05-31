@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 export class AvailabilityService {
   constructor(private prisma: PrismaService) {}
 
+  /** Returns the doctor's weekly working hours, ordered Mon–Sun (0=Sun). */
   getSchedule(userId: string) {
     return this.prisma.working_hours.findMany({
       where: { profile_id: userId },
@@ -15,6 +16,10 @@ export class AvailabilityService {
     });
   }
 
+  /**
+   * Replaces the entire weekly schedule in a single transaction.
+   * Delete-then-insert ensures no orphan rows remain from the old schedule.
+   */
   async updateSchedule(userId: string, dto: UpdateAvailabilityDto) {
     await this.prisma.$transaction(async (tx) => {
       await tx.working_hours.deleteMany({ where: { profile_id: userId } });
@@ -32,6 +37,7 @@ export class AvailabilityService {
     return this.getSchedule(userId);
   }
 
+  /** Returns all blocked time slots for a doctor, ordered by date then start time. */
   getBlockedTimes(userId: string) {
     return this.prisma.blocked_time.findMany({
       where: { profile_id: userId },
@@ -39,6 +45,7 @@ export class AvailabilityService {
     });
   }
 
+  /** Blocks a specific time range on a date (e.g. lunch break, holiday). */
   createBlockedTime(userId: string, dto: CreateBlockedTimeDto) {
     return this.prisma.blocked_time.create({
       data: {
@@ -52,6 +59,10 @@ export class AvailabilityService {
     });
   }
 
+  /**
+   * Removes a blocked time slot.
+   * Uses deleteMany with profile_id check to avoid 403/404 — safe no-op if already deleted.
+   */
   async deleteBlockedTime(userId: string, id: string) {
     await this.prisma.blocked_time.deleteMany({ where: { id, profile_id: userId } });
     return { message: 'Blocked time removed' };

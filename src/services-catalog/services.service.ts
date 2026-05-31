@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 export class ServicesCatalogService {
   constructor(private prisma: PrismaService) {}
 
+  /** Returns all services belonging to a doctor, ordered by creation date. */
   findAll(userId: string) {
     return this.prisma.services.findMany({
       where: { profile_id: userId },
@@ -15,6 +16,7 @@ export class ServicesCatalogService {
     });
   }
 
+  /** Creates a new bookable service for the authenticated doctor. */
   create(userId: string, dto: CreateServiceDto) {
     return this.prisma.services.create({
       data: {
@@ -28,6 +30,7 @@ export class ServicesCatalogService {
     });
   }
 
+  /** Updates a service after verifying the doctor owns it. */
   async update(userId: string, serviceId: string, dto: UpdateServiceDto) {
     await this.assertOwnership(userId, serviceId);
     return this.prisma.services.update({
@@ -43,12 +46,14 @@ export class ServicesCatalogService {
     });
   }
 
+  /** Deletes a service after verifying the doctor owns it. */
   async remove(userId: string, serviceId: string) {
     await this.assertOwnership(userId, serviceId);
     await this.prisma.services.delete({ where: { id: serviceId } });
     return { message: 'Service deleted' };
   }
 
+  /** Throws NotFoundException or ForbiddenException if the service doesn't belong to the user. */
   private async assertOwnership(userId: string, serviceId: string) {
     const service = await this.prisma.services.findUnique({ where: { id: serviceId } });
     if (!service) throw new NotFoundException('Service not found');

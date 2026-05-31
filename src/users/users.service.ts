@@ -6,12 +6,17 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
+  /** Returns a user's full profile by ID, with the password field stripped. */
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     return this.sanitize(user);
   }
 
+  /**
+   * Updates the authenticated user's profile.
+   * Checks slug uniqueness across other profiles before saving.
+   */
   async update(id: string, dto: UpdateProfileDto) {
     if (dto.bookingUrlSlug) {
       const conflict = await this.prisma.user.findFirst({
@@ -37,6 +42,7 @@ export class UsersService {
     return this.sanitize(updated);
   }
 
+  /** Strips the hashed password before returning user data to the client. */
   private sanitize(user: any) {
     const { password, ...safe } = user;
     return safe;

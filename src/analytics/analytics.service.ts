@@ -6,6 +6,14 @@ import { subDays, format } from 'date-fns';
 export class AnalyticsService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Aggregates analytics for a doctor's dashboard:
+   * - totalRevenue: sum of prices for completed appointments
+   * - completionRate: % of appointments that reached "completed" status
+   * - uniqueClients: distinct client emails across confirmed/completed appointments
+   * - dailyStats: bookings and revenue per day for the last 30 days
+   * - serviceDistribution: booking count grouped by service name
+   */
   async getData(userId: string) {
     const appointments = await this.prisma.appointments.findMany({
       where: { profile_id: userId },
