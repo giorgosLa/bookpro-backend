@@ -1,7 +1,8 @@
-import { Controller, Get, Patch, Body } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Body } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UploadAvatarDto } from './dto/upload-avatar.dto';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Users')
@@ -20,5 +21,11 @@ export class UsersController {
   @ApiOperation({ summary: 'Update current user profile' })
   updateMe(@CurrentUser() user: { id: string }, @Body() dto: UpdateProfileDto) {
     return this.usersService.update(user.id, dto);
+  }
+
+  @Post('me/avatar')
+  @ApiOperation({ summary: 'Upload avatar photo (base64) — stored on Cloudinary' })
+  uploadAvatar(@CurrentUser() user: { id: string }, @Body() dto: UploadAvatarDto) {
+    return this.usersService.uploadAvatar(user.id, dto.imageData);
   }
 }

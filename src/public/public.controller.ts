@@ -50,13 +50,15 @@ export class PublicController {
   @ApiOperation({ summary: 'Find nearest available dates around a base date' })
   @ApiQuery({ name: 'baseDate', example: '2026-06-15' })
   @ApiQuery({ name: 'duration', example: 30, type: Number })
+  @ApiQuery({ name: 'profileId', required: false })
   async getNearestDates(
     @Param('slug') slug: string,
     @Query('baseDate') baseDate: string,
     @Query('duration') duration: number,
+    @Query('profileId') profileId?: string,
   ) {
-    const profileId = await this.publicService.resolveProfileId(slug);
-    return this.publicService.findNearestDates(profileId, baseDate, Number(duration));
+    const id = profileId ?? await this.publicService.resolveProfileId(slug);
+    return this.publicService.findNearestDates(id, baseDate, Number(duration));
   }
 
   @Post('bookings')

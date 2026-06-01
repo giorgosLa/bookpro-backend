@@ -24,4 +24,9 @@ export class CreateServiceDto {
   @Min(5)
   @Max(480)
   durationMinutes: number;
+
+  @ApiPropertyOptional({ example: 'uuid-of-category' })
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 }

@@ -69,7 +69,14 @@ export class PublicService {
         timezone: true,
         booking_url_slug: true,
         buffer_minutes: true,
-        services: { where: { is_active: true } },
+        services: {
+          where: { is_active: true },
+          include: { service_category: { select: { id: true, name: true, order: true } } },
+          orderBy: [
+            { service_category: { order: 'asc' } },
+            { created_at: 'asc' },
+          ],
+        },
         working_hours: true,
       },
     });
@@ -302,7 +309,7 @@ export class PublicService {
   async findNearestDates(profileId: string, baseDateStr: string, durationMinutes: number) {
     const baseDate = this.parseDate(baseDateStr);
     const MAX = 20;
-    const REQUIRED = 3;
+    const REQUIRED = 5;
     const searchStart = subHours(startOfDay(addDays(baseDate, -MAX)), 12);
     const searchEnd = addHours(endOfDay(addDays(baseDate, MAX)), 12);
 
@@ -325,29 +332,39 @@ export class PublicService {
     const timezone = profile?.timezone ?? 'UTC';
     const today = startOfDay(toZonedTime(new Date(), timezone));
 
-    const hasSlots = (d: Date) => {
+    const getSlotsForDate = (d: Date): string[] => {
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
-      if (!wh) return false;
-      const slots = this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone);
-      return slots.length > 0;
+      if (!wh) return [];
+      return this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone);
     };
 
     const nextDates: string[] = [];
     const prevDates: string[] = [];
+    const slots: Record<string, string[]> = {};
     let offset = 1;
 
     while (nextDates.length < REQUIRED && offset <= MAX) {
       const d = addDays(baseDate, offset++);
-      if (hasSlots(d)) nextDates.push(format(d, 'yyyy-MM-dd'));
+      const s = getSlotsForDate(d);
+      if (s.length > 0) {
+        const key = format(d, 'yyyy-MM-dd');
+        nextDates.push(key);
+        slots[key] = s;
+      }
     }
     offset = 1;
     while (prevDates.length < REQUIRED && offset <= MAX) {
       const d = addDays(baseDate, -offset++);
       if (d < today) break;
-      if (hasSlots(d)) prevDates.push(format(d, 'yyyy-MM-dd'));
+      const s = getSlotsForDate(d);
+      if (s.length > 0) {
+        const key = format(d, 'yyyy-MM-dd');
+        prevDates.push(key);
+        slots[key] = s;
+      }
     }
 
-    return { nextDates, prevDates: prevDates.sort() };
+    return { nextDates, prevDates: prevDates.sort(), slots };
   }
 
   /**
