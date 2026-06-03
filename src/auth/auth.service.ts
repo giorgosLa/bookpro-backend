@@ -29,14 +29,14 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      select: { id: true, email: true, password: true },
+      select: { id: true, email: true, password: true, role: true },
     });
     if (!user || !user.password) throw new UnauthorizedException('Invalid credentials');
 
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    return this.issueTokens(user.id, user.email);
+    return this.issueTokens(user.id, user.email, user.role);
   }
 
   /**
@@ -58,28 +58,32 @@ export class AuthService {
 
     const slug = slugExists ? `${baseSlug}-${Math.floor(Math.random() * 9000) + 1000}` : baseSlug;
 
+    const role = dto.role ?? 'DOCTOR';
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         password: hashed,
         business_name: dto.businessName,
         booking_url_slug: slug,
-        role: dto.role ?? 'DOCTOR',
+        role,
+        ...(role === 'DOCTOR'
+          ? { doctor_profile: { create: {} } }
+          : { patient_profile: { create: {} } }),
       },
-      select: { id: true, email: true },
+      select: { id: true, email: true, role: true },
     });
 
-    return this.issueTokens(user.id, user.email);
+    return this.issueTokens(user.id, user.email, user.role);
   }
 
   /** Issues a fresh token pair for an existing user (called after refresh token validation). */
   async refresh(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true },
+      select: { id: true, email: true, role: true },
     });
     if (!user) throw new UnauthorizedException();
-    return this.issueTokens(user.id, user.email);
+    return this.issueTokens(user.id, user.email, user.role);
   }
 
   /**
@@ -139,8 +143,8 @@ export class AuthService {
   }
 
   /** Signs and returns an access token (15m) and a refresh token (7d). */
-  private issueTokens(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  private issueTokens(userId: string, email: string, role: string) {
+    const payload = { sub: userId, email, role };
     const accessToken = this.jwt.sign(payload, {
       expiresIn: this.config.get<string>('jwt.accessExpiresIn') ?? '15m',
     });

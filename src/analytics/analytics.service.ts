@@ -21,8 +21,8 @@ export class AnalyticsService {
     const [
       totalBookings,
       completedCount,
-      completedWithPrice,
-      uniqueClientsResult,
+      revenueRows,
+      uniqueRows,
       recentAppointments,
       serviceGroups,
       serviceNames,
@@ -33,15 +33,18 @@ export class AnalyticsService {
       this.prisma.appointments.count({
         where: { profile_id: userId, status: 'completed' },
       }),
-      this.prisma.appointments.findMany({
-        where: { profile_id: userId, status: 'completed' },
-        select: { services: { select: { price: true } } },
-      }),
-      this.prisma.appointments.findMany({
-        where: { profile_id: userId, status: { in: ['confirmed', 'completed'] } },
-        select: { client_email: true },
-        distinct: ['client_email'],
-      }),
+      this.prisma.$queryRaw<[{ total: number }]>`
+        SELECT COALESCE(SUM(s.price), 0)::float8 AS total
+        FROM appointments a
+        JOIN services s ON a.service_id = s.id
+        WHERE a.profile_id = ${userId}::uuid AND a.status = 'completed'
+      `,
+      this.prisma.$queryRaw<[{ count: bigint }]>`
+        SELECT COUNT(DISTINCT client_email) AS count
+        FROM appointments
+        WHERE profile_id = ${userId}::uuid
+          AND status IN ('confirmed', 'completed')
+      `,
       this.prisma.appointments.findMany({
         where: { profile_id: userId, start_time: { gte: thirtyDaysAgo } },
         select: { start_time: true, status: true, services: { select: { price: true } } },
@@ -58,10 +61,7 @@ export class AnalyticsService {
       }),
     ]);
 
-    const totalRevenue = completedWithPrice.reduce(
-      (sum, a) => sum + Number(a.services?.price ?? 0),
-      0,
-    );
+    const totalRevenue = revenueRows[0]?.total ?? 0;
 
     const completionRate =
       totalBookings > 0 ? Math.round((completedCount / totalBookings) * 100) : 0;
@@ -90,7 +90,7 @@ export class AnalyticsService {
       totalRevenue,
       totalBookings,
       completionRate,
-      uniqueClients: uniqueClientsResult.length,
+      uniqueClients: Number(uniqueRows[0]?.count ?? 0),
       dailyStats: last30Days,
       serviceDistribution,
     };

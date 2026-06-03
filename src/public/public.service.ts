@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MedicalSpecialty } from '@prisma/client';
 import { PrismaService } from '@/database/prisma.service';
 import { EmailService } from '@/email/email.service';
 import { EventsService } from '@/events/events.service';
@@ -31,22 +32,28 @@ export class PublicService {
     private events: EventsService,
   ) {}
 
-  /** Returns all registered doctors who have a booking slug. Optionally filters by profession (case-insensitive). */
-  async getDoctors(profession?: string) {
+  /** Returns all registered doctors who have a booking slug. Optionally filters by specialty enum. */
+  async getDoctors(specialty?: string) {
+    const validSpecialty = specialty && Object.values(MedicalSpecialty).includes(specialty as MedicalSpecialty)
+      ? (specialty as MedicalSpecialty)
+      : undefined;
+
     const doctors = await this.prisma.user.findMany({
       where: {
         role: 'DOCTOR',
         booking_url_slug: { not: null },
-        ...(profession ? { profession: { contains: profession, mode: 'insensitive' } } : {}),
+        ...(validSpecialty ? { doctor_profile: { specialty: validSpecialty } } : {}),
       },
       select: {
         id: true,
         business_name: true,
         full_name: true,
-        profession: true,
         bio: true,
         booking_url_slug: true,
         avatar_url: true,
+        doctor_profile: {
+          select: { specialty: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true },
+        },
       },
       orderBy: { created_at: 'asc' },
       take: 100,
@@ -62,13 +69,15 @@ export class PublicService {
         id: true,
         full_name: true,
         business_name: true,
-        profession: true,
         bio: true,
         address: true,
         avatar_url: true,
         timezone: true,
         booking_url_slug: true,
         buffer_minutes: true,
+        doctor_profile: {
+          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true },
+        },
         services: {
           where: { is_active: true },
           include: { service_category: { select: { id: true, name: true, order: true } } },
@@ -118,18 +127,19 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
-      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true } }),
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
     ]);
 
     const timezone = profile?.timezone ?? 'UTC';
-    return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone);
+    const bufferMinutes = profile?.buffer_minutes ?? 0;
+    return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes);
   }
 
   /**
    * Creates a guest booking inside a SERIALIZABLE transaction to prevent double-booking.
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
    */
-  async createBooking(dto: CreateBookingDto) {
+  async createBooking(dto: CreateBookingDto, patientId?: string) {
     const service = await this.prisma.services.findUnique({
       where: { id: dto.serviceId, profile_id: dto.profileId },
     });
@@ -156,6 +166,7 @@ export class PublicService {
           data: {
             id: uuidv4(),
             profile_id: dto.profileId,
+            patient_id: patientId ?? null,
             service_id: dto.serviceId,
             client_name: dto.clientName,
             client_email: dto.clientEmail,
@@ -218,7 +229,6 @@ export class PublicService {
             id: true,
             full_name: true,
             business_name: true,
-            profession: true,
             avatar_url: true,
             booking_url_slug: true,
           },
@@ -326,16 +336,17 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
-      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true } }),
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
     ]);
 
     const timezone = profile?.timezone ?? 'UTC';
+    const bufferMinutes = profile?.buffer_minutes ?? 0;
     const today = startOfDay(toZonedTime(new Date(), timezone));
 
     const getSlotsForDate = (d: Date): string[] => {
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
       if (!wh) return [];
-      return this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone);
+      return this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone, bufferMinutes);
     };
 
     const nextDates: string[] = [];
@@ -380,6 +391,7 @@ export class PublicService {
     duration: number,
     dateStr: string,
     timezone: string = 'UTC',
+    bufferMinutes: number = 0,
   ): string[] {
     const [startH, startM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
     const [endH, endM] = wh.end_time.toISOString().substring(11, 16).split(':').map(Number);
@@ -414,7 +426,7 @@ export class PublicService {
         }),
       ...appointments
         .filter((a) => a.start_time < dayEnd && a.end_time > dayStart)
-        .map((a) => ({ start: a.start_time.getTime(), end: a.end_time.getTime() })),
+        .map((a) => ({ start: a.start_time.getTime(), end: a.end_time.getTime() + bufferMinutes * 60_000 })),
     ];
 
     const slots: string[] = [];
@@ -446,6 +458,57 @@ export class PublicService {
     if (startTime < open || endTime > close) {
       throw new BadRequestException('Requested time is outside working hours');
     }
+  }
+
+  /**
+   * Returns the next `limit` available slots for a doctor, using their shortest service duration.
+   */
+  async getNextSlots(slug: string, limit: number = 3): Promise<{ date: string; time: string }[]> {
+    const profileId = await this.resolveProfileId(slug);
+
+    const [shortestService] = await this.prisma.services.findMany({
+      where: { profile_id: profileId, is_active: true },
+      select: { duration_minutes: true },
+      orderBy: { duration_minutes: 'asc' },
+      take: 1,
+    });
+    const duration = shortestService?.duration_minutes ?? 30;
+
+    const baseDateStr = format(new Date(), 'yyyy-MM-dd');
+    const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration);
+
+    const result: { date: string; time: string }[] = [];
+    for (const date of nextDates) {
+      for (const time of (slots[date] ?? [])) {
+        result.push({ date, time });
+        if (result.length >= limit) return result;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Returns the next `limit` available dates with the first available slot of each day.
+   * Used by the search results page to show the doctolib-style date grid.
+   */
+  async getAvailabilityDates(slug: string, limit: number = 6): Promise<{ date: string; firstSlot: string }[]> {
+    const profileId = await this.resolveProfileId(slug);
+
+    const [shortestService] = await this.prisma.services.findMany({
+      where: { profile_id: profileId, is_active: true },
+      select: { duration_minutes: true },
+      orderBy: { duration_minutes: 'asc' },
+      take: 1,
+    });
+    const duration = shortestService?.duration_minutes ?? 30;
+
+    const baseDateStr = format(new Date(), 'yyyy-MM-dd');
+    const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration);
+
+    return nextDates
+      .slice(0, limit)
+      .map((date) => ({ date, firstSlot: slots[date]?.[0] ?? '' }))
+      .filter((d) => d.firstSlot !== '');
   }
 
   /** Resolves a booking slug to a profile id without fetching the full profile. */

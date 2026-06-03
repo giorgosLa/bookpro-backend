@@ -11,9 +11,15 @@ export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all appointments for authenticated user' })
+  @ApiOperation({ summary: 'List all appointments for authenticated doctor' })
   findAll(@CurrentUser() user: { id: string }) {
     return this.appointmentsService.findAll(user.id);
+  }
+
+  @Get('my')
+  @ApiOperation({ summary: 'List appointments for authenticated patient (upcoming + past)' })
+  findMyAppointments(@CurrentUser() user: { id: string }) {
+    return this.appointmentsService.findMyAppointments(user.id);
   }
 
   @Patch(':id/status')

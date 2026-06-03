@@ -7,12 +7,15 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { PublicService } from './public.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
 import { Public } from '@/common/decorators/public.decorator';
+import { OptionalJwtAuthGuard } from '@/common/guards/optional-jwt-auth.guard';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Public')
 @Public()
@@ -22,9 +25,9 @@ export class PublicController {
 
   @Get('doctors')
   @ApiOperation({ summary: 'List all registered doctors' })
-  @ApiQuery({ name: 'profession', required: false })
-  getDoctors(@Query('profession') profession?: string) {
-    return this.publicService.getDoctors(profession);
+  @ApiQuery({ name: 'specialty', required: false, description: 'Filter by MedicalSpecialty enum value' })
+  getDoctors(@Query('specialty') specialty?: string) {
+    return this.publicService.getDoctors(specialty);
   }
 
   @Get('profile/:slug')
@@ -46,6 +49,26 @@ export class PublicController {
     return this.publicService.getSlots(profileId, date, Number(duration));
   }
 
+  @Get('profile/:slug/availability-dates')
+  @ApiOperation({ summary: 'Get next available dates with first slot — for search results page' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getAvailabilityDates(
+    @Param('slug') slug: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.publicService.getAvailabilityDates(slug, limit ? Number(limit) : 6);
+  }
+
+  @Get('profile/:slug/next-slots')
+  @ApiOperation({ summary: 'Get next N available slots for listing page' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getNextSlots(
+    @Param('slug') slug: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.publicService.getNextSlots(slug, limit ? Number(limit) : 3);
+  }
+
   @Get('profile/:slug/nearest-dates')
   @ApiOperation({ summary: 'Find nearest available dates around a base date' })
   @ApiQuery({ name: 'baseDate', example: '2026-06-15' })
@@ -62,9 +85,13 @@ export class PublicController {
   }
 
   @Post('bookings')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Create a new booking' })
-  createBooking(@Body() dto: CreateBookingDto) {
-    return this.publicService.createBooking(dto);
+  createBooking(
+    @Body() dto: CreateBookingDto,
+    @CurrentUser() user?: { id: string },
+  ) {
+    return this.publicService.createBooking(dto, user?.id);
   }
 
   @Get('bookings/:token')

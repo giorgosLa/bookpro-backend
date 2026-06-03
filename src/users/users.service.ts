@@ -18,7 +18,10 @@ export class UsersService {
   }
 
   async findById(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { doctor_profile: true, patient_profile: true },
+    });
     if (!user) throw new NotFoundException('User not found');
     return this.sanitize(user);
   }
@@ -31,19 +34,54 @@ export class UsersService {
       if (conflict) throw new ConflictException('This URL slug is already taken');
     }
 
+    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.licenseNumber].some(
+      (v) => v !== undefined,
+    );
+    const hasPatientFields = [dto.phone, dto.dateOfBirth, dto.gender, dto.amka, dto.eopyyNumber, dto.gessyNumber, dto.bloodType, dto.allergies].some(
+      (v) => v !== undefined,
+    );
+
+    const doctorData = hasDoctorFields
+      ? {
+          specialty: dto.specialty,
+          accepts_gessy: dto.acceptsGessy,
+          accepts_eopyy: dto.acceptsEopyy,
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+          license_number: dto.licenseNumber,
+          updated_at: new Date(),
+        }
+      : undefined;
+
+    const patientData = hasPatientFields
+      ? {
+          phone: dto.phone,
+          date_of_birth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
+          gender: dto.gender,
+          amka: dto.amka,
+          eopyy_number: dto.eopyyNumber,
+          gessy_number: dto.gessyNumber,
+          blood_type: dto.bloodType,
+          allergies: dto.allergies,
+          updated_at: new Date(),
+        }
+      : undefined;
+
     const updated = await this.prisma.user.update({
       where: { id },
       data: {
         business_name: dto.businessName,
         full_name: dto.fullName,
-        profession: dto.profession,
         bio: dto.bio,
         address: dto.address,
         booking_url_slug: dto.bookingUrlSlug,
         timezone: dto.timezone,
         buffer_minutes: dto.bufferMinutes,
         updated_at: new Date(),
+        ...(doctorData ? { doctor_profile: { upsert: { create: doctorData, update: doctorData } } } : {}),
+        ...(patientData ? { patient_profile: { upsert: { create: patientData, update: patientData } } } : {}),
       },
+      include: { doctor_profile: true, patient_profile: true },
     });
 
     return this.sanitize(updated);

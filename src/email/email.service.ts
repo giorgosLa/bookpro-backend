@@ -39,6 +39,32 @@ export class EmailService {
     });
   }
 
+  async sendAppointmentConfirmedToPatient(opts: {
+    to: string;
+    clientName: string;
+    businessName: string;
+    serviceName: string;
+    date: string;
+    time: string;
+    managementToken: string;
+    appUrl: string;
+  }) {
+    const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
+    return this.send({
+      to: opts.to,
+      subject: `Επιβεβαίωση ραντεβού – ${opts.businessName}`,
+      html: `
+        <h2>Το ραντεβού σας επιβεβαιώθηκε!</h2>
+        <p>Γεια σας ${opts.clientName},</p>
+        <p>Ο/Η <strong>${opts.businessName}</strong> επιβεβαίωσε το ραντεβού σας για <strong>${opts.serviceName}</strong>.</p>
+        <p><strong>Ημερομηνία:</strong> ${opts.date}<br/>
+           <strong>Ώρα:</strong> ${opts.time}</p>
+        <p><a href="${manageUrl}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Διαχείριση ραντεβού</a></p>
+        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
+      `,
+    });
+  }
+
   async sendCancellationNotificationToDoctor(opts: {
     to: string;
     doctorName: string;

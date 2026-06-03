@@ -6,7 +6,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// Auth.js required models
 model User {
   id            String    @id @default(uuid()) @db.Uuid
   email         String    @unique
@@ -15,7 +14,6 @@ model User {
   role          UserRole  @default(DOCTOR)
   full_name     String?
   business_name String?
-  profession    String?
   bio           String?
   address       String?
   avatar_url    String?
@@ -35,12 +33,17 @@ model User {
   created_at                 DateTime  @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime  @default(now()) @db.Timestamptz(6)
 
-  accounts           Account[]
-  appointments       appointments[]
-  blocked_time       blocked_time[]
-  services           services[]
-  working_hours      working_hours[]
-  service_categories service_categories[]
+  accounts              Account[]
+  appointments          appointments[]
+  patient_appointments  appointments[]    @relation("PatientAppointments")
+  blocked_time          blocked_time[]
+  services              services[]
+  working_hours         working_hours[]
+  service_categories    service_categories[]
+  doctor_profile        DoctorProfile?
+  patient_profile       PatientProfile?
+  doctor_reviews        Review[]          @relation("DoctorReviews")
+  patient_reviews       Review[]          @relation("PatientReviews")
 
   @@map("profiles")
 }
@@ -75,6 +78,7 @@ model VerificationToken {
 model appointments {
   id                    String         @id @db.Uuid
   profile_id            String         @db.Uuid
+  patient_id            String?        @db.Uuid
   service_id            String         @db.Uuid
   client_name           String
   client_email          String
@@ -91,13 +95,17 @@ model appointments {
   parent_appointment_id String?        @db.Uuid
   created_at            DateTime       @default(now()) @db.Timestamptz(6)
   updated_at            DateTime       @default(now()) @db.Timestamptz(6)
-  appointments          appointments?  @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
-  other_appointments    appointments[] @relation("appointmentsToappointments")
-  profiles              User           @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  services              services       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+
+  appointments       appointments?  @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
+  other_appointments appointments[] @relation("appointmentsToappointments")
+  profiles           User           @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  patient            User?          @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
+  services           services       @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  review             Review?
 
   @@index([profile_id, start_time])
   @@index([profile_id, status])
+  @@index([patient_id])
 }
 
 model services {
@@ -158,6 +166,26 @@ model blocked_time {
   @@index([profile_id, date])
 }
 
+model Review {
+  id             String   @id @default(uuid()) @db.Uuid
+  appointment_id String   @unique @db.Uuid
+  doctor_id      String   @db.Uuid
+  patient_id     String?  @db.Uuid
+  client_name    String
+  rating         Int
+  comment        String?
+  is_visible     Boolean  @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  appointment appointments @relation(fields: [appointment_id], references: [id], onDelete: Cascade)
+  doctor      User         @relation("DoctorReviews", fields: [doctor_id], references: [id], onDelete: Cascade)
+  patient     User?        @relation("PatientReviews", fields: [patient_id], references: [id], onDelete: SetNull)
+
+  @@index([doctor_id])
+  @@map("reviews")
+}
+
 enum appointment_status {
   pending
   confirmed
@@ -176,4 +204,91 @@ enum subscription_status {
 enum UserRole {
   DOCTOR
   PATIENT
+  ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BloodType {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+}
+
+enum MedicalSpecialty {
+  GENERAL_PRACTITIONER
+  CARDIOLOGIST
+  DERMATOLOGIST
+  ENDOCRINOLOGIST
+  GASTROENTEROLOGIST
+  NEUROLOGIST
+  OBSTETRICIAN_GYNECOLOGIST
+  OPHTHALMOLOGIST
+  ORTHOPEDIC_SURGEON
+  OTOLARYNGOLOGIST
+  PEDIATRICIAN
+  PSYCHIATRIST
+  PULMONOLOGIST
+  RADIOLOGIST
+  RHEUMATOLOGIST
+  SURGEON
+  UROLOGIST
+  DENTIST
+  ORTHODONTIST
+  PHYSIOTHERAPIST
+  PSYCHOLOGIST
+  NUTRITIONIST
+  OTHER
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model DoctorProfile {
+  id                  String             @id @default(uuid()) @db.Uuid
+  user_id             String             @unique @db.Uuid
+  specialty           MedicalSpecialty?
+  latitude            Float?
+  longitude           Float?
+  accepts_gessy       Boolean            @default(false)
+  accepts_eopyy       Boolean            @default(false)
+  license_number      String?            @db.VarChar(50)
+  verification_status VerificationStatus @default(PENDING)
+  created_at          DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime           @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("doctor_profiles")
+}
+
+model PatientProfile {
+  id            String     @id @default(uuid()) @db.Uuid
+  user_id       String     @unique @db.Uuid
+  phone         String?
+  date_of_birth DateTime?  @db.Date
+  gender        Gender?
+  amka          String?    @unique
+  eopyy_number  String?
+  gessy_number  String?
+  blood_type    BloodType?
+  allergies     String?
+  created_at    DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime   @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("patient_profiles")
 }
