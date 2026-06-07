@@ -76,7 +76,7 @@ export class PublicService {
         booking_url_slug: true,
         buffer_minutes: true,
         doctor_profile: {
-          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true },
+          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, license_number: true },
         },
         services: {
           where: { is_active: true },

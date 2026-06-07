@@ -75,10 +75,18 @@ export class AnalyticsService {
       entry.bookings++;
       if (a.status === 'completed') entry.revenue += Number(a.services?.price ?? 0);
     }
-    const last30Days = Array.from({ length: 30 }, (_, i) => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const pastDays = Array.from({ length: 30 }, (_, i) => {
       const date = format(subDays(new Date(), 29 - i), 'yyyy-MM-dd');
       return { date, ...(dailyMap.get(date) ?? { bookings: 0, revenue: 0 }) };
     });
+    // Upcoming appointments have future dates — append them so slice(-period)
+    // on the frontend correctly counts all appointments in the selected window.
+    const futureDays = [...dailyMap.keys()]
+      .filter((d) => d > today)
+      .sort()
+      .map((d) => ({ date: d, ...dailyMap.get(d)! }));
+    const last30Days = [...pastDays, ...futureDays];
 
     const serviceNameMap = new Map(serviceNames.map((s) => [s.id, s.name]));
     const serviceDistribution = serviceGroups.map((g) => ({
