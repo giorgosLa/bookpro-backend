@@ -23,6 +23,9 @@ import {
 import { toZonedTime } from 'date-fns-tz';
 import { v4 as uuidv4 } from 'uuid';
 
+const availCache = new Map<string, { data: { date: string; firstSlot: string }[]; expiresAt: number }>()
+const AVAIL_TTL = 2 * 60 * 1000 // 2 minutes
+
 @Injectable()
 export class PublicService {
   constructor(
@@ -49,10 +52,17 @@ export class PublicService {
         business_name: true,
         full_name: true,
         bio: true,
+        address: true,
         booking_url_slug: true,
         avatar_url: true,
         doctor_profile: {
           select: { specialty: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true },
+        },
+        services: {
+          where: { is_active: true },
+          select: { id: true, name: true, price: true },
+          orderBy: { duration_minutes: 'asc' },
+          take: 3,
         },
       },
       orderBy: { created_at: 'asc' },
@@ -492,6 +502,10 @@ export class PublicService {
    * Used by the search results page to show the doctolib-style date grid.
    */
   async getAvailabilityDates(slug: string, limit: number = 6): Promise<{ date: string; firstSlot: string }[]> {
+    const cacheKey = `${slug}:${limit}`
+    const cached = availCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) return cached.data
+
     const profileId = await this.resolveProfileId(slug);
 
     const [shortestService] = await this.prisma.services.findMany({
@@ -505,10 +519,13 @@ export class PublicService {
     const baseDateStr = format(new Date(), 'yyyy-MM-dd');
     const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration);
 
-    return nextDates
+    const result = nextDates
       .slice(0, limit)
       .map((date) => ({ date, firstSlot: slots[date]?.[0] ?? '' }))
       .filter((d) => d.firstSlot !== '');
+
+    availCache.set(cacheKey, { data: result, expiresAt: Date.now() + AVAIL_TTL });
+    return result;
   }
 
   /** Resolves a booking slug to a profile id without fetching the full profile. */
