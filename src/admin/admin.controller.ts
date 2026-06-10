@@ -1,8 +1,12 @@
-import { Controller, Get, Patch, Param, Body, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Put, Delete, Param, Body, Query, UseGuards, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { AdminGuard } from '@/common/guards/admin.guard';
 import { VerifyDoctorDto } from './dto/verify-doctor.dto';
+import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
+import { AdminUpdateScheduleDto } from './dto/admin-update-schedule.dto';
+import { AdminCreateServiceDto, AdminUpdateServiceDto } from './dto/admin-service.dto';
+import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth()
@@ -15,6 +19,31 @@ export class AdminController {
   @ApiOperation({ summary: 'Platform overview stats' })
   getStats() {
     return this.adminService.getStats();
+  }
+
+  @Get('appointments')
+  @ApiOperation({ summary: 'List all platform appointments with filters and pagination' })
+  getAppointments(@Query() dto: AdminAppointmentsQueryDto) {
+    return this.adminService.getAdminAppointments(dto);
+  }
+
+  @Patch('appointments/:id/status')
+  @ApiOperation({ summary: 'Cancel or force-complete any appointment (admin override)' })
+  updateAppointmentStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { status: string },
+  ) {
+    return this.adminService.updateAdminAppointmentStatus(id, body.status);
+  }
+
+  @Get('analytics')
+  @ApiOperation({ summary: 'Platform-wide analytics (revenue, bookings, user growth, top doctors)' })
+  @ApiQuery({ name: 'days', required: false, description: '30 or 90', example: 30 })
+  getAnalytics(
+    @Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number,
+  ) {
+    const safeDays = [30, 90].includes(days) ? days : 30;
+    return this.adminService.getAdminAnalytics(safeDays);
   }
 
   @Get('users')
@@ -57,5 +86,66 @@ export class AdminController {
   @ApiOperation({ summary: 'Toggle review visibility' })
   toggleReviewVisibility(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.toggleReviewVisibility(id);
+  }
+
+  @Patch('users/:id/suspend')
+  @ApiOperation({ summary: 'Suspend or unsuspend a user' })
+  suspendUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { suspend: boolean },
+  ) {
+    return this.adminService.suspendUser(id, body.suspend);
+  }
+
+  @Delete('users/:id')
+  @ApiOperation({ summary: 'Permanently delete a user and all their data' })
+  deleteUser(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.deleteUser(id);
+  }
+
+  @Patch('doctors/:id/profile')
+  @ApiOperation({ summary: 'Update doctor profile fields (name, specialty, bio, address, license, gessy/eopyy)' })
+  updateDoctorProfile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateDoctorProfileDto,
+  ) {
+    return this.adminService.updateDoctorProfile(id, dto);
+  }
+
+  @Put('doctors/:id/schedule')
+  @ApiOperation({ summary: 'Replace doctor working hours schedule' })
+  updateDoctorSchedule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateScheduleDto,
+  ) {
+    return this.adminService.updateDoctorSchedule(id, dto);
+  }
+
+  @Post('doctors/:id/services')
+  @ApiOperation({ summary: 'Add a service to a doctor' })
+  createDoctorService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreateServiceDto,
+  ) {
+    return this.adminService.createDoctorService(id, dto);
+  }
+
+  @Patch('doctors/:id/services/:serviceId')
+  @ApiOperation({ summary: 'Update a doctor service' })
+  updateDoctorService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('serviceId', ParseUUIDPipe) serviceId: string,
+    @Body() dto: AdminUpdateServiceDto,
+  ) {
+    return this.adminService.updateDoctorService(id, serviceId, dto);
+  }
+
+  @Delete('doctors/:id/services/:serviceId')
+  @ApiOperation({ summary: 'Delete a doctor service' })
+  deleteDoctorService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('serviceId', ParseUUIDPipe) serviceId: string,
+  ) {
+    return this.adminService.deleteDoctorService(id, serviceId);
   }
 }

@@ -29,12 +29,14 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      select: { id: true, email: true, password: true, role: true },
+      select: { id: true, email: true, password: true, role: true, is_suspended: true },
     });
     if (!user || !user.password) throw new UnauthorizedException('Invalid credentials');
 
     const valid = await bcrypt.compare(dto.password, user.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
+
+    if (user.is_suspended) throw new UnauthorizedException('Account suspended');
 
     return this.issueTokens(user.id, user.email, user.role);
   }
@@ -80,9 +82,10 @@ export class AuthService {
   async refresh(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, role: true },
+      select: { id: true, email: true, role: true, is_suspended: true },
     });
     if (!user) throw new UnauthorizedException();
+    if (user.is_suspended) throw new UnauthorizedException('Account suspended');
     return this.issueTokens(user.id, user.email, user.role);
   }
 
@@ -154,15 +157,30 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  /** Verifies the refresh token signature and returns the user ID (sub claim). */
+  /** Verifies the refresh token signature, checks it wasn't issued before a session invalidation, and returns the user ID. */
   async validateRefreshToken(token: string): Promise<string> {
+    let payload: { sub: string; iat?: number };
     try {
-      const payload = this.jwt.verify<{ sub: string }>(token, {
+      payload = this.jwt.verify<{ sub: string; iat?: number }>(token, {
         secret: this.config.get<string>('jwt.secret'),
       });
-      return payload.sub;
     } catch {
       throw new BadRequestException('Invalid refresh token');
     }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { is_suspended: true, sessions_invalidated_at: true },
+    });
+    if (!user || user.is_suspended) throw new UnauthorizedException('Account suspended');
+    if (
+      user.sessions_invalidated_at &&
+      payload.iat !== undefined &&
+      payload.iat * 1000 < user.sessions_invalidated_at.getTime()
+    ) {
+      throw new UnauthorizedException('Session invalidated');
+    }
+
+    return payload.sub;
   }
 }

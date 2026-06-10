@@ -45,7 +45,11 @@ export class PublicService {
       where: {
         role: 'DOCTOR',
         booking_url_slug: { not: null },
-        ...(validSpecialty ? { doctor_profile: { specialty: validSpecialty } } : {}),
+        is_suspended: false,
+        doctor_profile: {
+          verification_status: 'APPROVED',
+          ...(validSpecialty ? { specialty: validSpecialty } : {}),
+        },
       },
       select: {
         id: true,
@@ -85,6 +89,7 @@ export class PublicService {
         timezone: true,
         booking_url_slug: true,
         buffer_minutes: true,
+        is_suspended: true,
         doctor_profile: {
           select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, license_number: true },
         },
@@ -99,7 +104,9 @@ export class PublicService {
         working_hours: true,
       },
     });
-    if (!profile) throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new NotFoundException('Profile not found');
+    }
     return profile;
   }
 

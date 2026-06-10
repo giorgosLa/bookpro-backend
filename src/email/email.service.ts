@@ -88,6 +88,35 @@ export class EmailService {
     });
   }
 
+  async sendDoctorApproved(opts: { to: string; name: string; appUrl: string }) {
+    return this.send({
+      to: opts.to,
+      subject: 'Ο λογαριασμός σας εγκρίθηκε – BookPro',
+      html: `
+        <h2>Συγχαρητήρια, ${opts.name}!</h2>
+        <p>Ο λογαριασμός σας ως γιατρός έχει <strong>εγκριθεί</strong> από την ομάδα του BookPro.</p>
+        <p>Μπορείτε τώρα να δεχτείτε ραντεβού μέσω της πλατφόρμας.</p>
+        <p><a href="${opts.appUrl}/dashboard" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Μεταβείτε στο Dashboard</a></p>
+        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
+      `,
+    });
+  }
+
+  async sendDoctorRejected(opts: { to: string; name: string; reason?: string; appUrl: string }) {
+    return this.send({
+      to: opts.to,
+      subject: 'Ενημέρωση για τον λογαριασμό σας – BookPro',
+      html: `
+        <h2>Ενημέρωση λογαριασμού</h2>
+        <p>Γεια σας ${opts.name},</p>
+        <p>Μετά από έλεγχο, ο λογαριασμός σας ως γιατρός <strong>δεν εγκρίθηκε</strong> αυτή τη φορά.</p>
+        ${opts.reason ? `<p><strong>Λόγος:</strong> ${opts.reason}</p>` : ''}
+        <p>Εάν πιστεύετε ότι πρόκειται για λάθος ή θέλετε να επικοινωνήσετε μαζί μας, απαντήστε σε αυτό το email.</p>
+        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
+      `,
+    });
+  }
+
   async sendPasswordReset(opts: { to: string; name: string; resetLink: string }) {
     return this.send({
       to: opts.to,

@@ -87,6 +87,18 @@ export class UsersService {
     return this.sanitize(updated);
   }
 
+  async resubmitVerification(userId: string) {
+    const profile = await this.prisma.doctorProfile.findUnique({ where: { user_id: userId } });
+    if (!profile) throw new NotFoundException('Doctor profile not found');
+    if (profile.verification_status === 'APPROVED') {
+      throw new BadRequestException('Your profile is already approved');
+    }
+    return this.prisma.doctorProfile.update({
+      where: { user_id: userId },
+      data: { verification_status: 'PENDING', rejection_reason: null, updated_at: new Date() },
+    });
+  }
+
   async uploadAvatar(userId: string, imageData: string): Promise<{ avatarUrl: string }> {
     // Reject payloads over ~8 MB (base64 of a ~6 MB raw image)
     if (imageData.length > 8 * 1024 * 1024) {
