@@ -13,6 +13,7 @@ import { EmailModule } from './email/email.module';
 import { PublicModule } from './public/public.module';
 import { EventsModule } from './events/events.module';
 import { AdminModule } from './admin/admin.module';
+import { LocationsModule } from './locations/locations.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -31,6 +32,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     PublicModule,
     EventsModule,
     AdminModule,
+    LocationsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

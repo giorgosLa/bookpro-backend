@@ -10,6 +10,8 @@ import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.d
 import { AdminUpdateScheduleDto } from './dto/admin-update-schedule.dto';
 import { AdminCreateServiceDto, AdminUpdateServiceDto } from './dto/admin-service.dto';
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
+import { BulkVerifyDto } from './dto/bulk-verify.dto';
+import { AdminVerificationDto } from './dto/admin-verification.dto';
 
 @Injectable()
 export class AdminService {
@@ -385,6 +387,48 @@ export class AdminService {
         totalAppointments: Number(d.total_appointments),
       })),
     };
+  }
+
+  async bulkVerifyDoctors(dto: BulkVerifyDto) {
+    await this.prisma.doctorProfile.updateMany({
+      where: { user_id: { in: dto.ids } },
+      data: {
+        verification_status: dto.status,
+        rejection_reason: dto.status === 'REJECTED' ? (dto.reason ?? null) : null,
+        updated_at: new Date(),
+      },
+    });
+
+    const doctors = await this.prisma.user.findMany({
+      where: { id: { in: dto.ids }, role: 'DOCTOR' },
+      select: { email: true, full_name: true, business_name: true },
+    });
+    const appUrl = this.config.get<string>('appUrl') ?? 'https://bookpro.gr';
+    for (const doc of doctors) {
+      const name = doc.business_name || doc.full_name || doc.email;
+      if (dto.status === 'APPROVED') {
+        this.email.sendDoctorApproved({ to: doc.email, name, appUrl }).catch(() => {});
+      } else {
+        this.email.sendDoctorRejected({ to: doc.email, name, reason: dto.reason, appUrl }).catch(() => {});
+      }
+    }
+
+    return { updated: dto.ids.length };
+  }
+
+  async updateDoctorVerification(doctorId: string, dto: AdminVerificationDto) {
+    await this.assertDoctor(doctorId);
+
+    const data: Record<string, unknown> = { updated_at: new Date() };
+    if (dto.adminNotes !== undefined) data.admin_notes = dto.adminNotes;
+    if (dto.checklist !== undefined) data.verification_checklist = dto.checklist;
+
+    await this.prisma.doctorProfile.update({
+      where: { user_id: doctorId },
+      data,
+    });
+
+    return this.getDoctorDetail(doctorId);
   }
 
   private async assertDoctor(doctorId: string) {

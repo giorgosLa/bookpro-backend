@@ -23,8 +23,8 @@ import {
 import { toZonedTime } from 'date-fns-tz';
 import { v4 as uuidv4 } from 'uuid';
 
-const availCache = new Map<string, { data: { date: string; firstSlot: string }[]; expiresAt: number }>()
-const AVAIL_TTL = 2 * 60 * 1000 // 2 minutes
+export const availCache = new Map<string, { data: { date: string; firstSlot: string }[]; expiresAt: number }>()
+const AVAIL_TTL = 30 * 1000 // 30 seconds
 
 @Injectable()
 export class PublicService {
@@ -68,6 +68,12 @@ export class PublicService {
           orderBy: { duration_minutes: 'asc' },
           take: 3,
         },
+        locations: {
+          where: { is_active: true },
+          select: { id: true, name: true, address: true },
+          orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
+          take: 5,
+        },
       },
       orderBy: { created_at: 'asc' },
       take: 100,
@@ -102,6 +108,20 @@ export class PublicService {
           ],
         },
         working_hours: true,
+        locations: {
+          where: { is_active: true },
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            phone: true,
+            location_services: {
+              where: { is_active: true },
+              select: { service_id: true, price_override: true, duration_override: true },
+            },
+          },
+          orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
+        },
       },
     });
     if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
@@ -115,13 +135,19 @@ export class PublicService {
    * Returns [] if the doctor doesn't work on that day.
    * excludeId skips an existing appointment (used during reschedule).
    */
-  async getSlots(profileId: string, dateStr: string, durationMinutes: number, excludeId?: string) {
+  async getSlots(profileId: string, dateStr: string, durationMinutes: number, excludeId?: string, locationId?: string) {
     const selectedDate = this.parseDate(dateStr);
     const dayOfWeek = selectedDate.getDay();
 
-    const wh = await this.prisma.working_hours.findFirst({
-      where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true },
+    // Try location-specific hours first; fall back to global (location_id: null)
+    let wh = await this.prisma.working_hours.findFirst({
+      where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: locationId ?? null },
     });
+    if (!wh && locationId) {
+      wh = await this.prisma.working_hours.findFirst({
+        where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
+      });
+    }
     if (!wh) return [];
 
     const dayStart = startOfDay(selectedDate);
@@ -166,7 +192,7 @@ export class PublicService {
     if (startTime < new Date()) throw new BadRequestException('Cannot book a slot in the past');
     const endTime = addMinutes(startTime, service.duration_minutes);
 
-    await this.validateWithinWorkingHours(dto.profileId, startTime, endTime);
+    await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, dto.locationId);
 
     const appointment = await this.prisma.$transaction(
       async (tx) => {
@@ -185,6 +211,7 @@ export class PublicService {
             profile_id: dto.profileId,
             patient_id: patientId ?? null,
             service_id: dto.serviceId,
+            location_id: dto.locationId ?? null,
             client_name: dto.clientName,
             client_email: dto.clientEmail,
             client_phone: dto.clientPhone ?? null,
@@ -332,8 +359,9 @@ export class PublicService {
    * Finds up to 3 available dates before and after a base date (within ±20 days).
    * Used by the booking wizard to surface smart date suggestions when a day has no slots.
    * Fetches all data once and runs slot computation in-memory to avoid N+1 queries.
+   * When locationId is provided, only considers working hours for that specific location.
    */
-  async findNearestDates(profileId: string, baseDateStr: string, durationMinutes: number) {
+  async findNearestDates(profileId: string, baseDateStr: string, durationMinutes: number, locationId?: string) {
     const baseDate = this.parseDate(baseDateStr);
     const MAX = 20;
     const REQUIRED = 5;
@@ -341,7 +369,13 @@ export class PublicService {
     const searchEnd = addHours(endOfDay(addDays(baseDate, MAX)), 12);
 
     const [workingHours, blockedTimes, appointments, profile] = await Promise.all([
-      this.prisma.working_hours.findMany({ where: { profile_id: profileId, is_enabled: true } }),
+      this.prisma.working_hours.findMany({
+        where: {
+          profile_id: profileId,
+          is_enabled: true,
+          ...(locationId ? { location_id: locationId } : {}),
+        },
+      }),
       this.prisma.blocked_time.findMany({
         where: { profile_id: profileId, date: { gte: searchStart, lte: searchEnd } },
       }),
@@ -460,10 +494,16 @@ export class PublicService {
   }
 
   /** Throws if startTime–endTime falls outside the doctor's working hours for that day. */
-  private async validateWithinWorkingHours(profileId: string, startTime: Date, endTime: Date): Promise<void> {
-    const wh = await this.prisma.working_hours.findFirst({
-      where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true },
+  private async validateWithinWorkingHours(profileId: string, startTime: Date, endTime: Date, locationId?: string): Promise<void> {
+    // Try location-specific hours first; fall back to global (location_id: null)
+    let wh = await this.prisma.working_hours.findFirst({
+      where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true, location_id: locationId ?? null },
     });
+    if (!wh && locationId) {
+      wh = await this.prisma.working_hours.findFirst({
+        where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true, location_id: null },
+      });
+    }
     if (!wh) throw new BadRequestException('Doctor does not work on this day');
 
     const [openH, openM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
@@ -507,13 +547,13 @@ export class PublicService {
   /**
    * Returns the next `limit` available dates with the first available slot of each day.
    * Used by the search results page to show the doctolib-style date grid.
+   * When locationId is provided, only shows availability for that specific location.
    */
-  async getAvailabilityDates(slug: string, limit: number = 6): Promise<{ date: string; firstSlot: string }[]> {
-    const cacheKey = `${slug}:${limit}`
+  async getAvailabilityDates(slug: string, limit: number = 6, locationId?: string): Promise<{ date: string; firstSlot: string }[]> {
+    const profileId = await this.resolveProfileId(slug);
+    const cacheKey = `${profileId}:${limit}:${locationId ?? 'all'}`
     const cached = availCache.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) return cached.data
-
-    const profileId = await this.resolveProfileId(slug);
 
     const [shortestService] = await this.prisma.services.findMany({
       where: { profile_id: profileId, is_active: true },
@@ -524,7 +564,7 @@ export class PublicService {
     const duration = shortestService?.duration_minutes ?? 30;
 
     const baseDateStr = format(new Date(), 'yyyy-MM-dd');
-    const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration);
+    const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration, locationId);
 
     const result = nextDates
       .slice(0, limit)

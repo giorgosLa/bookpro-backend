@@ -40,23 +40,27 @@ export class PublicController {
   @ApiOperation({ summary: 'Get available time slots for a date' })
   @ApiQuery({ name: 'date', example: '2026-06-15' })
   @ApiQuery({ name: 'duration', example: 30, type: Number })
+  @ApiQuery({ name: 'locationId', required: false })
   async getSlots(
     @Param('slug') slug: string,
     @Query('date') date: string,
     @Query('duration') duration: number,
+    @Query('locationId') locationId?: string,
   ) {
     const profileId = await this.publicService.resolveProfileId(slug);
-    return this.publicService.getSlots(profileId, date, Number(duration));
+    return this.publicService.getSlots(profileId, date, Number(duration), undefined, locationId);
   }
 
   @Get('profile/:slug/availability-dates')
   @ApiOperation({ summary: 'Get next available dates with first slot — for search results page' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'locationId', required: false })
   async getAvailabilityDates(
     @Param('slug') slug: string,
     @Query('limit') limit?: string,
+    @Query('locationId') locationId?: string,
   ) {
-    return this.publicService.getAvailabilityDates(slug, limit ? Number(limit) : 6);
+    return this.publicService.getAvailabilityDates(slug, limit ? Number(limit) : 6, locationId);
   }
 
   @Get('profile/:slug/next-slots')

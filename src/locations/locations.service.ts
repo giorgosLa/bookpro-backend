@@ -1,0 +1,223 @@
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { PrismaService } from '@/database/prisma.service';
+import { v4 as uuidv4 } from 'uuid';
+import { availCache } from '@/public/public.service';
+import { CreateLocationDto, UpdateLocationDto } from './dto/create-location.dto';
+import {
+  AddLocationServiceDto,
+  UpdateLocationServiceDto,
+  UpdateLocationScheduleDto,
+  CreateLocationBlockedTimeDto,
+} from './dto/location-service.dto';
+
+@Injectable()
+export class LocationsService {
+  constructor(private prisma: PrismaService) {}
+
+  // ── Location CRUD ──────────────────────────────────────────────────────────
+
+  findAll(userId: string) {
+    return this.prisma.locations.findMany({
+      where: { profile_id: userId },
+      include: {
+        location_services: {
+          include: { service: { select: { id: true, name: true, price: true, duration_minutes: true } } },
+          orderBy: { created_at: 'asc' },
+        },
+        working_hours: { orderBy: { day_of_week: 'asc' } },
+      },
+      orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
+    });
+  }
+
+  create(userId: string, dto: CreateLocationDto) {
+    return this.prisma.locations.create({
+      data: {
+        id: uuidv4(),
+        profile_id: userId,
+        name: dto.name,
+        address: dto.address ?? null,
+        phone: dto.phone ?? null,
+        lat: dto.lat ?? null,
+        lng: dto.lng ?? null,
+        order: dto.order ?? 0,
+      },
+    });
+  }
+
+  async update(userId: string, locationId: string, dto: UpdateLocationDto) {
+    await this.assertOwnership(userId, locationId);
+    return this.prisma.locations.update({
+      where: { id: locationId },
+      data: {
+        name: dto.name,
+        address: dto.address,
+        phone: dto.phone,
+        lat: dto.lat,
+        lng: dto.lng,
+        is_active: dto.isActive,
+        order: dto.order,
+        updated_at: new Date(),
+      },
+    });
+  }
+
+  async remove(userId: string, locationId: string) {
+    await this.assertOwnership(userId, locationId);
+    await this.prisma.locations.delete({ where: { id: locationId } });
+    return { message: 'Location deleted' };
+  }
+
+  // ── Per-location schedule ──────────────────────────────────────────────────
+
+  async getSchedule(userId: string, locationId: string) {
+    await this.assertOwnership(userId, locationId);
+    return this.prisma.working_hours.findMany({
+      where: { location_id: locationId },
+      orderBy: { day_of_week: 'asc' },
+    });
+  }
+
+  async updateSchedule(userId: string, locationId: string, dto: UpdateLocationScheduleDto) {
+    await this.assertOwnership(userId, locationId);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.working_hours.deleteMany({ where: { location_id: locationId } });
+      await tx.working_hours.createMany({
+        data: dto.schedule.map((s) => ({
+          id: uuidv4(),
+          profile_id: userId,
+          location_id: locationId,
+          day_of_week: s.dayOfWeek,
+          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
+          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
+          is_enabled: s.isEnabled,
+        })),
+      });
+    });
+    this.clearAvailCache(userId);
+    return this.getSchedule(userId, locationId);
+  }
+
+  // ── Per-location blocked time ──────────────────────────────────────────────
+
+  async getBlockedTimes(userId: string, locationId: string) {
+    await this.assertOwnership(userId, locationId);
+    return this.prisma.blocked_time.findMany({
+      where: { location_id: locationId, date: { gte: new Date() } },
+      orderBy: [{ date: 'asc' }, { start_time: 'asc' }],
+    });
+  }
+
+  async createBlockedTime(userId: string, locationId: string, dto: CreateLocationBlockedTimeDto) {
+    await this.assertOwnership(userId, locationId);
+    const result = await this.prisma.blocked_time.create({
+      data: {
+        id: uuidv4(),
+        profile_id: userId,
+        location_id: locationId,
+        date: new Date(dto.date),
+        start_time: new Date(`1970-01-01T${dto.startTime}:00Z`),
+        end_time: new Date(`1970-01-01T${dto.endTime}:00Z`),
+        reason: dto.reason ?? null,
+      },
+    });
+    this.clearAvailCache(userId);
+    return result;
+  }
+
+  async deleteBlockedTime(userId: string, locationId: string, blockedId: string) {
+    await this.assertOwnership(userId, locationId);
+    await this.prisma.blocked_time.deleteMany({
+      where: { id: blockedId, location_id: locationId, profile_id: userId },
+    });
+    this.clearAvailCache(userId);
+    return { message: 'Blocked time removed' };
+  }
+
+  // ── Location services (pivot) ──────────────────────────────────────────────
+
+  async getServices(userId: string, locationId: string) {
+    await this.assertOwnership(userId, locationId);
+    return this.prisma.location_services.findMany({
+      where: { location_id: locationId },
+      include: {
+        service: {
+          select: { id: true, name: true, description: true, price: true, duration_minutes: true, is_active: true },
+        },
+      },
+      orderBy: { created_at: 'asc' },
+    });
+  }
+
+  async addService(userId: string, locationId: string, dto: AddLocationServiceDto) {
+    await this.assertOwnership(userId, locationId);
+
+    const service = await this.prisma.services.findUnique({
+      where: { id: dto.serviceId, profile_id: userId },
+    });
+    if (!service) throw new NotFoundException('Service not found');
+
+    const existing = await this.prisma.location_services.findUnique({
+      where: { location_id_service_id: { location_id: locationId, service_id: dto.serviceId } },
+    });
+    if (existing) throw new ConflictException('Service already added to this location');
+
+    return this.prisma.location_services.create({
+      data: {
+        id: uuidv4(),
+        location_id: locationId,
+        service_id: dto.serviceId,
+        price_override: dto.priceOverride ?? null,
+        duration_override: dto.durationOverride ?? null,
+      },
+      include: {
+        service: { select: { id: true, name: true, description: true, price: true, duration_minutes: true } },
+      },
+    });
+  }
+
+  async updateService(userId: string, locationId: string, serviceId: string, dto: UpdateLocationServiceDto) {
+    await this.assertOwnership(userId, locationId);
+    const pivot = await this.prisma.location_services.findUnique({
+      where: { location_id_service_id: { location_id: locationId, service_id: serviceId } },
+    });
+    if (!pivot) throw new NotFoundException('Service not found in this location');
+
+    return this.prisma.location_services.update({
+      where: { location_id_service_id: { location_id: locationId, service_id: serviceId } },
+      data: {
+        price_override: dto.priceOverride !== undefined ? (dto.priceOverride ?? null) : undefined,
+        duration_override: dto.durationOverride !== undefined ? (dto.durationOverride ?? null) : undefined,
+        is_active: dto.isActive,
+      },
+      include: {
+        service: { select: { id: true, name: true, description: true, price: true, duration_minutes: true } },
+      },
+    });
+  }
+
+  async removeService(userId: string, locationId: string, serviceId: string) {
+    await this.assertOwnership(userId, locationId);
+    await this.prisma.location_services.delete({
+      where: { location_id_service_id: { location_id: locationId, service_id: serviceId } },
+    });
+    return { message: 'Service removed from location' };
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  private async assertOwnership(userId: string, locationId: string) {
+    const location = await this.prisma.locations.findUnique({
+      where: { id: locationId },
+      select: { profile_id: true },
+    });
+    if (!location) throw new NotFoundException('Location not found');
+    if (location.profile_id !== userId) throw new ForbiddenException();
+  }
+
+  private clearAvailCache(userId: string) {
+    for (const key of availCache.keys()) {
+      if (key.startsWith(`${userId}:`)) availCache.delete(key);
+    }
+  }
+}

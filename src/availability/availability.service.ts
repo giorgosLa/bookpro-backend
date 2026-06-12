@@ -8,21 +8,21 @@ import { v4 as uuidv4 } from 'uuid';
 export class AvailabilityService {
   constructor(private prisma: PrismaService) {}
 
-  /** Returns the doctor's weekly working hours, ordered Mon–Sun (0=Sun). */
+  /** Returns the doctor's global weekly working hours (no location), ordered Mon–Sun (0=Sun). */
   getSchedule(userId: string) {
     return this.prisma.working_hours.findMany({
-      where: { profile_id: userId },
+      where: { profile_id: userId, location_id: null },
       orderBy: { day_of_week: 'asc' },
     });
   }
 
   /**
-   * Replaces the entire weekly schedule in a single transaction.
-   * Delete-then-insert ensures no orphan rows remain from the old schedule.
+   * Replaces the entire global weekly schedule in a single transaction.
+   * Only touches hours where location_id IS NULL — never deletes location-specific hours.
    */
   async updateSchedule(userId: string, dto: UpdateAvailabilityDto) {
     await this.prisma.$transaction(async (tx) => {
-      await tx.working_hours.deleteMany({ where: { profile_id: userId } });
+      await tx.working_hours.deleteMany({ where: { profile_id: userId, location_id: null } });
       await tx.working_hours.createMany({
         data: dto.schedule.map((s) => ({
           id: uuidv4(),
@@ -37,10 +37,10 @@ export class AvailabilityService {
     return this.getSchedule(userId);
   }
 
-  /** Returns future blocked time slots for a doctor (today onwards), ordered by date then start time. */
+  /** Returns future global blocked times (no location) ordered by date then start time. */
   getBlockedTimes(userId: string) {
     return this.prisma.blocked_time.findMany({
-      where: { profile_id: userId, date: { gte: new Date() } },
+      where: { profile_id: userId, location_id: null, date: { gte: new Date() } },
       orderBy: [{ date: 'asc' }, { start_time: 'asc' }],
     });
   }

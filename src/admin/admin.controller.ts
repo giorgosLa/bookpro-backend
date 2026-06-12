@@ -7,6 +7,8 @@ import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.d
 import { AdminUpdateScheduleDto } from './dto/admin-update-schedule.dto';
 import { AdminCreateServiceDto, AdminUpdateServiceDto } from './dto/admin-service.dto';
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
+import { BulkVerifyDto } from './dto/bulk-verify.dto';
+import { AdminVerificationDto } from './dto/admin-verification.dto';
 
 @ApiTags('Admin')
 @ApiBearerAuth()
@@ -101,6 +103,21 @@ export class AdminController {
   @ApiOperation({ summary: 'Permanently delete a user and all their data' })
   deleteUser(@Param('id', ParseUUIDPipe) id: string) {
     return this.adminService.deleteUser(id);
+  }
+
+  @Post('doctors/bulk-verify')
+  @ApiOperation({ summary: 'Approve or reject multiple doctors at once (sends emails)' })
+  bulkVerifyDoctors(@Body() dto: BulkVerifyDto) {
+    return this.adminService.bulkVerifyDoctors(dto);
+  }
+
+  @Patch('doctors/:id/verification')
+  @ApiOperation({ summary: 'Save admin checklist + notes for doctor verification' })
+  updateDoctorVerification(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminVerificationDto,
+  ) {
+    return this.adminService.updateDoctorVerification(id, dto);
   }
 
   @Patch('doctors/:id/profile')
