@@ -12,7 +12,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: false }),
+    new FastifyAdapter({ logger: false, bodyLimit: 20 * 1024 * 1024 }), // 20 MB for base64 image uploads
   );
 
   const config = app.get(ConfigService);

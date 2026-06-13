@@ -108,6 +108,10 @@ export class PublicService {
           ],
         },
         working_hours: true,
+        doctor_photos: {
+          orderBy: { order: 'asc' as const },
+          select: { id: true, url: true, order: true },
+        },
         locations: {
           where: { is_active: true },
           select: {
@@ -194,39 +198,47 @@ export class PublicService {
 
     await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, dto.locationId);
 
-    const appointment = await this.prisma.$transaction(
-      async (tx) => {
-        const conflict = await tx.appointments.findFirst({
-          where: {
-            profile_id: dto.profileId,
-            status: { in: ['pending', 'confirmed'] },
-            AND: [{ start_time: { lt: endTime } }, { end_time: { gt: startTime } }],
-          },
-        });
-        if (conflict) throw new ConflictException('This time slot is no longer available');
+    const [appointment, location] = await Promise.all([
+      this.prisma.$transaction(
+        async (tx) => {
+          const conflict = await tx.appointments.findFirst({
+            where: {
+              profile_id: dto.profileId,
+              status: { in: ['pending', 'confirmed'] },
+              AND: [{ start_time: { lt: endTime } }, { end_time: { gt: startTime } }],
+            },
+          });
+          if (conflict) throw new ConflictException('This time slot is no longer available');
 
-        return tx.appointments.create({
-          data: {
-            id: uuidv4(),
-            profile_id: dto.profileId,
-            patient_id: patientId ?? null,
-            service_id: dto.serviceId,
-            location_id: dto.locationId ?? null,
-            client_name: dto.clientName,
-            client_email: dto.clientEmail,
-            client_phone: dto.clientPhone ?? null,
-            client_timezone: dto.clientTimezone ?? null,
-            start_time: startTime,
-            end_time: endTime,
-            status: 'pending',
-            management_token: uuidv4(),
-            notes: dto.notes ?? null,
-          },
-          include: { services: true, profiles: true },
-        });
-      },
-      { isolationLevel: 'Serializable' },
-    );
+          return tx.appointments.create({
+            data: {
+              id: uuidv4(),
+              profile_id: dto.profileId,
+              patient_id: patientId ?? null,
+              service_id: dto.serviceId,
+              location_id: dto.locationId ?? null,
+              client_name: dto.clientName,
+              client_email: dto.clientEmail,
+              client_phone: dto.clientPhone ?? null,
+              client_timezone: dto.clientTimezone ?? null,
+              start_time: startTime,
+              end_time: endTime,
+              status: 'pending',
+              management_token: uuidv4(),
+              notes: dto.notes ?? null,
+            },
+            include: { services: true, profiles: true },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      ),
+      dto.locationId
+        ? this.prisma.locations.findUnique({
+            where: { id: dto.locationId },
+            select: { name: true, address: true, lat: true, lng: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
     // Push real-time notification to the doctor's SSE stream (fire-and-forget)
     this.events.emit(appointment.profile_id, {
@@ -246,6 +258,16 @@ export class PublicService {
     });
 
     const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+
+    let mapsUrl: string | undefined;
+    if (location) {
+      mapsUrl = location.lat && location.lng
+        ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
+        : location.address
+          ? `https://maps.google.com/?q=${encodeURIComponent(location.address)}`
+          : undefined;
+    }
+
     this.email
       .sendBookingConfirmation({
         to: dto.clientEmail,
@@ -256,6 +278,9 @@ export class PublicService {
         time: dto.time,
         managementToken: appointment.management_token,
         appUrl,
+        locationName: location?.name,
+        locationAddress: location?.address ?? undefined,
+        mapsUrl,
       })
       .catch(() => null);
 

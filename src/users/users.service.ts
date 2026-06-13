@@ -99,6 +99,52 @@ export class UsersService {
     });
   }
 
+  async getClinicPhotos(userId: string) {
+    return this.prisma.doctorPhoto.findMany({
+      where: { profile_id: userId },
+      orderBy: { order: 'asc' },
+    });
+  }
+
+  getUploadSignature(userId: string) {
+    const timestamp = Math.round(Date.now() / 1000);
+    const folder = `bookpro/clinic-photos/${userId}`;
+    const apiSecret = this.config.get<string>('cloudinary.apiSecret')!;
+    const signature = cloudinary.utils.api_sign_request({ folder, timestamp }, apiSecret);
+    return {
+      signature,
+      timestamp,
+      apiKey: this.config.get<string>('cloudinary.apiKey'),
+      cloudName: this.config.get<string>('cloudinary.cloudName'),
+      folder,
+    };
+  }
+
+  async saveClinicPhoto(userId: string, url: string) {
+    const count = await this.prisma.doctorPhoto.count({ where: { profile_id: userId } });
+    if (count >= 9) throw new BadRequestException('Μέγιστος αριθμός φωτογραφιών: 9');
+
+    const agg = await this.prisma.doctorPhoto.aggregate({
+      _max: { order: true },
+      where: { profile_id: userId },
+    });
+
+    return this.prisma.doctorPhoto.create({
+      data: { profile_id: userId, url, order: (agg._max.order ?? -1) + 1 },
+    });
+  }
+
+  async deleteClinicPhoto(userId: string, photoId: string) {
+    const photo = await this.prisma.doctorPhoto.findFirst({ where: { id: photoId, profile_id: userId } });
+    if (!photo) throw new NotFoundException('Photo not found');
+
+    const match = photo.url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.\w+)?$/);
+    if (match?.[1]) await cloudinary.uploader.destroy(match[1]);
+
+    await this.prisma.doctorPhoto.delete({ where: { id: photoId } });
+    return { success: true };
+  }
+
   async uploadAvatar(userId: string, imageData: string): Promise<{ avatarUrl: string }> {
     // Reject payloads over ~8 MB (base64 of a ~6 MB raw image)
     if (imageData.length > 8 * 1024 * 1024) {

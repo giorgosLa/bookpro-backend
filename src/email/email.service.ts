@@ -22,19 +22,59 @@ export class EmailService {
     time: string;
     managementToken: string;
     appUrl: string;
+    locationName?: string;
+    locationAddress?: string;
+    mapsUrl?: string;
   }) {
     const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
+
+    const locationBlock = opts.locationName
+      ? `
+        <tr>
+          <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
+            <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Τοποθεσία</p>
+            <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.locationName}</p>
+            ${opts.locationAddress ? `<p style="margin:2px 0 0;color:#64748b;font-size:13px">${opts.locationAddress}</p>` : ''}
+            ${opts.mapsUrl ? `<a href="${opts.mapsUrl}" style="display:inline-block;margin-top:8px;color:#2563eb;font-size:13px;font-weight:600;text-decoration:none">📍 Άνοιγμα στο Google Maps →</a>` : ''}
+          </td>
+        </tr>`
+      : '';
+
     return this.send({
       to: opts.to,
-      subject: `Booking Confirmed – ${opts.businessName}`,
+      subject: `Επιβεβαίωση ραντεβού – ${opts.businessName}`,
       html: `
-        <h2>Your booking is confirmed!</h2>
-        <p>Hi ${opts.clientName},</p>
-        <p>Your appointment for <strong>${opts.serviceName}</strong> has been confirmed.</p>
-        <p><strong>Date:</strong> ${opts.date}<br/>
-           <strong>Time:</strong> ${opts.time}</p>
-        <p><a href="${manageUrl}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Manage your booking</a></p>
-        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#ffffff">
+          <div style="background:#2563eb;padding:28px 32px;border-radius:12px 12px 0 0">
+            <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:800">Το ραντεβού σας επιβεβαιώθηκε!</h1>
+          </div>
+          <div style="padding:28px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="color:#475569;font-size:15px;margin:0 0 20px">Γεια σας <strong>${opts.clientName}</strong>,</p>
+            <p style="color:#475569;font-size:15px;margin:0 0 20px">Το ραντεβού σας με <strong>${opts.businessName}</strong> έχει καταχωρηθεί επιτυχώς.</p>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+              <tr>
+                <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
+                  <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Υπηρεσία</p>
+                  <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.serviceName}</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
+                  <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Ημερομηνία & Ώρα</p>
+                  <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.date} στις ${opts.time}</p>
+                </td>
+              </tr>
+              ${locationBlock}
+            </table>
+
+            <a href="${manageUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:13px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">
+              Διαχείριση ραντεβού
+            </a>
+
+            <p style="color:#94a3b8;font-size:12px;margin:24px 0 0">BookPro – Professional Booking Platform</p>
+          </div>
+        </div>
       `,
     });
   }

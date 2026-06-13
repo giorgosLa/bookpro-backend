@@ -1,8 +1,9 @@
-import { Controller, Get, Patch, Post, Body } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Delete, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UploadAvatarDto } from './dto/upload-avatar.dto';
+import { SaveClinicPhotoDto } from './dto/save-clinic-photo.dto';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 
 @ApiTags('Users')
@@ -33,5 +34,29 @@ export class UsersController {
   @ApiOperation({ summary: 'Upload avatar photo (base64) — stored on Cloudinary' })
   uploadAvatar(@CurrentUser() user: { id: string }, @Body() dto: UploadAvatarDto) {
     return this.usersService.uploadAvatar(user.id, dto.imageData);
+  }
+
+  @Get('me/photos')
+  @ApiOperation({ summary: 'List clinic photos for authenticated doctor' })
+  getClinicPhotos(@CurrentUser() user: { id: string }) {
+    return this.usersService.getClinicPhotos(user.id);
+  }
+
+  @Get('me/photos/signature')
+  @ApiOperation({ summary: 'Get Cloudinary signed upload params for direct browser upload' })
+  getUploadSignature(@CurrentUser() user: { id: string }) {
+    return this.usersService.getUploadSignature(user.id);
+  }
+
+  @Post('me/photos/save')
+  @ApiOperation({ summary: 'Save clinic photo URL after direct Cloudinary upload (max 9)' })
+  saveClinicPhoto(@CurrentUser() user: { id: string }, @Body() dto: SaveClinicPhotoDto) {
+    return this.usersService.saveClinicPhoto(user.id, dto.url);
+  }
+
+  @Delete('me/photos/:id')
+  @ApiOperation({ summary: 'Delete a clinic photo by id' })
+  deleteClinicPhoto(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    return this.usersService.deleteClinicPhoto(user.id, id);
   }
 }
