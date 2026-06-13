@@ -29,7 +29,7 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      select: { id: true, email: true, password: true, role: true, is_suspended: true },
+      select: { id: true, email: true, password: true, role: true, is_suspended: true, emailVerified: true },
     });
     if (!user || !user.password) throw new UnauthorizedException('Invalid credentials');
 
@@ -37,6 +37,8 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
     if (user.is_suspended) throw new UnauthorizedException('Account suspended');
+
+    if (!user.emailVerified) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
 
     return this.issueTokens(user.id, user.email, user.role);
   }
@@ -75,7 +77,52 @@ export class AuthService {
       select: { id: true, email: true, role: true },
     });
 
+    await this.sendOtp(user.email, dto.businessName);
+
+    return { email: user.email, otpSent: true };
+  }
+
+  async verifyOtp(email: string, otp: string) {
+    const record = await this.prisma.verificationToken.findFirst({
+      where: { identifier: `otp:${email}`, token: otp },
+    });
+
+    if (!record || record.expires < new Date()) {
+      throw new BadRequestException('Ο κωδικός είναι λανθασμένος ή έχει λήξει');
+    }
+
+    const user = await this.prisma.user.update({
+      where: { email },
+      data: { emailVerified: new Date() },
+      select: { id: true, email: true, role: true },
+    });
+
+    await this.prisma.verificationToken.delete({
+      where: { identifier_token: { identifier: `otp:${email}`, token: otp } },
+    });
+
     return this.issueTokens(user.id, user.email, user.role);
+  }
+
+  async resendOtp(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { business_name: true },
+    });
+    if (!user) return;
+    await this.sendOtp(email, user.business_name ?? email);
+  }
+
+  private async sendOtp(email: string, name: string): Promise<void> {
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.prisma.verificationToken.deleteMany({ where: { identifier: `otp:${email}` } });
+    await this.prisma.verificationToken.create({
+      data: { identifier: `otp:${email}`, token: otp, expires },
+    });
+
+    await this.email.sendEmailOtp({ to: email, name, otp });
   }
 
   /** Issues a fresh token pair for an existing user (called after refresh token validation). */

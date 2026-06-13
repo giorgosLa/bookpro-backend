@@ -117,6 +117,26 @@ export class EmailService {
     });
   }
 
+  async sendEmailOtp(opts: { to: string; name: string; otp: string }) {
+    return this.send({
+      to: opts.to,
+      subject: `${opts.otp} – Κωδικός επαλήθευσης BookPro`,
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+          <h2 style="color:#1e293b;margin-bottom:8px">Επαλήθευση Email</h2>
+          <p style="color:#475569">Γεια σας ${opts.name},</p>
+          <p style="color:#475569">Χρησιμοποιήστε τον παρακάτω κωδικό για να επαληθεύσετε το email σας:</p>
+          <div style="background:#f1f5f9;border-radius:12px;padding:28px;text-align:center;margin:24px 0">
+            <span style="font-size:40px;font-weight:900;letter-spacing:14px;color:#1e293b;font-family:monospace">${opts.otp}</span>
+          </div>
+          <p style="color:#64748b;font-size:13px">Ο κωδικός λήγει σε <strong>10 λεπτά</strong>.</p>
+          <p style="color:#94a3b8;font-size:12px">Αν δεν δημιουργήσατε λογαριασμό στο BookPro, αγνοήστε αυτό το email.</p>
+          <p style="color:#94a3b8;font-size:12px">BookPro – Professional Booking Platform</p>
+        </div>
+      `,
+    });
+  }
+
   async sendPasswordReset(opts: { to: string; name: string; resetLink: string }) {
     return this.send({
       to: opts.to,
