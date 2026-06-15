@@ -22,10 +22,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
+    const response = exception instanceof HttpException ? exception.getResponse() : null;
     const message =
-      exception instanceof HttpException
-        ? (exception.getResponse() as any)?.message ?? exception.message
-        : 'Internal server error';
+      response && typeof response === 'object'
+        ? (response as any).message ?? (exception instanceof Error ? exception.message : 'Internal server error')
+        : typeof response === 'string'
+          ? response
+          : 'Internal server error';
+
+    // Pass through any extra fields from the exception response (e.g. missingFields)
+    const { message: _msg, statusCode: _sc, error: _err, ...extra } =
+      response && typeof response === 'object' ? (response as Record<string, unknown>) : {};
 
     if (status >= 500) {
       this.logger.error(`${request.url} → ${status}`, exception instanceof Error ? exception.stack : String(exception));
@@ -34,6 +41,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     reply.status(status).send({
       statusCode: status,
       message: Array.isArray(message) ? message : [message],
+      ...extra,
       timestamp: new Date().toISOString(),
       path: request.url,
     });

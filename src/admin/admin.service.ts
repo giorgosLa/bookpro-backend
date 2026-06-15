@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { subDays, startOfDay } from 'date-fns';
@@ -37,7 +37,7 @@ export class AdminService {
         doctor_profile: {
           select: {
             specialty: true,
-            license_number: true,
+            medical_association_number: true,
             verification_status: true,
             rejection_reason: true,
             accepts_gessy: true,
@@ -157,9 +157,33 @@ export class AdminService {
   async verifyDoctor(doctorId: string, dto: VerifyDoctorDto) {
     const doctor = await this.prisma.user.findUnique({
       where: { id: doctorId },
-      select: { email: true, full_name: true, business_name: true, doctor_profile: { select: { id: true } } },
+      select: {
+        email: true,
+        full_name: true,
+        business_name: true,
+        avatar_url: true,
+        doctor_profile: {
+          select: {
+            id: true,
+            specialty: true,
+            phone: true,
+            medical_association_number: true,
+            afm: true,
+            id_photo_url: true,
+            terms_accepted: true,
+            education: true,
+          },
+        },
+      },
     });
     if (!doctor?.doctor_profile) throw new NotFoundException('Doctor profile not found');
+
+    if (dto.status === 'APPROVED') {
+      const missingFields = this.getMissingProfileFields(doctor);
+      if (missingFields.length > 0) {
+        throw new BadRequestException({ message: 'Το προφίλ δεν είναι πλήρες', missingFields });
+      }
+    }
 
     const appUrl = this.config.get<string>('appUrl') ?? 'https://bookpro.gr';
     const name = doctor.business_name || doctor.full_name || doctor.email;
@@ -390,30 +414,72 @@ export class AdminService {
   }
 
   async bulkVerifyDoctors(dto: BulkVerifyDto) {
-    await this.prisma.doctorProfile.updateMany({
-      where: { user_id: { in: dto.ids } },
-      data: {
-        verification_status: dto.status,
-        rejection_reason: dto.status === 'REJECTED' ? (dto.reason ?? null) : null,
-        updated_at: new Date(),
+    const appUrl = this.config.get<string>('appUrl') ?? 'https://bookpro.gr';
+
+    // For rejection no completeness check is needed — reject all at once
+    if (dto.status !== 'APPROVED') {
+      await this.prisma.doctorProfile.updateMany({
+        where: { user_id: { in: dto.ids } },
+        data: { verification_status: dto.status, rejection_reason: dto.reason ?? null, updated_at: new Date() },
+      });
+      const doctors = await this.prisma.user.findMany({
+        where: { id: { in: dto.ids }, role: 'DOCTOR' },
+        select: { email: true, full_name: true, business_name: true },
+      });
+      for (const doc of doctors) {
+        const name = doc.business_name || doc.full_name || doc.email;
+        this.email.sendDoctorRejected({ to: doc.email, name, reason: dto.reason, appUrl }).catch(() => {});
+      }
+      return { approved: 0, rejected: dto.ids.length, skipped: [] };
+    }
+
+    // For approval, check each doctor's completeness individually
+    const doctors = await this.prisma.user.findMany({
+      where: { id: { in: dto.ids }, role: 'DOCTOR' },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        business_name: true,
+        avatar_url: true,
+        doctor_profile: {
+          select: {
+            specialty: true,
+            phone: true,
+            medical_association_number: true,
+            afm: true,
+            id_photo_url: true,
+            terms_accepted: true,
+            education: true,
+          },
+        },
       },
     });
 
-    const doctors = await this.prisma.user.findMany({
-      where: { id: { in: dto.ids }, role: 'DOCTOR' },
-      select: { email: true, full_name: true, business_name: true },
-    });
-    const appUrl = this.config.get<string>('appUrl') ?? 'https://bookpro.gr';
+    const approvedIds: string[] = [];
+    const skipped: { id: string; name: string; missingFields: string[] }[] = [];
+
     for (const doc of doctors) {
-      const name = doc.business_name || doc.full_name || doc.email;
-      if (dto.status === 'APPROVED') {
-        this.email.sendDoctorApproved({ to: doc.email, name, appUrl }).catch(() => {});
+      const missingFields = this.getMissingProfileFields(doc);
+      if (missingFields.length > 0) {
+        skipped.push({ id: doc.id, name: doc.business_name || doc.full_name || doc.email, missingFields });
       } else {
-        this.email.sendDoctorRejected({ to: doc.email, name, reason: dto.reason, appUrl }).catch(() => {});
+        approvedIds.push(doc.id);
       }
     }
 
-    return { updated: dto.ids.length };
+    if (approvedIds.length > 0) {
+      await this.prisma.doctorProfile.updateMany({
+        where: { user_id: { in: approvedIds } },
+        data: { verification_status: 'APPROVED', rejection_reason: null, updated_at: new Date() },
+      });
+      for (const doc of doctors.filter((d) => approvedIds.includes(d.id))) {
+        const name = doc.business_name || doc.full_name || doc.email;
+        this.email.sendDoctorApproved({ to: doc.email, name, appUrl }).catch(() => {});
+      }
+    }
+
+    return { approved: approvedIds.length, skipped };
   }
 
   async updateDoctorVerification(doctorId: string, dto: AdminVerificationDto) {
@@ -436,6 +502,33 @@ export class AdminService {
     if (!doc || doc.role !== 'DOCTOR') throw new NotFoundException('Doctor not found');
   }
 
+  private getMissingProfileFields(doctor: {
+    full_name: string | null;
+    avatar_url: string | null;
+    doctor_profile: {
+      specialty: string | null;
+      phone: string | null;
+      medical_association_number: string | null;
+      afm: string | null;
+      id_photo_url: string | null;
+      terms_accepted: boolean | null;
+      education: string | null;
+    } | null;
+  }): string[] {
+    const dp = doctor.doctor_profile;
+    const missing: string[] = [];
+    if (!doctor.avatar_url) missing.push('Φωτογραφία προφίλ');
+    if (!doctor.full_name) missing.push('Πλήρες όνομα');
+    if (!dp?.specialty) missing.push('Ειδικότητα');
+    if (!dp?.phone) missing.push('Τηλέφωνο');
+    if (!dp?.medical_association_number) missing.push('ΑΜ Ιατρικού Συλλόγου');
+    if (!dp?.afm) missing.push('ΑΦΜ');
+    if (!dp?.id_photo_url) missing.push('Φωτογραφία ταυτότητας');
+    if (!dp?.terms_accepted) missing.push('Αποδοχή όρων χρήσης');
+    if (!dp?.education) missing.push('Τίτλοι σπουδών');
+    return missing;
+  }
+
   async updateDoctorProfile(doctorId: string, dto: AdminUpdateDoctorProfileDto) {
     await this.assertDoctor(doctorId);
 
@@ -453,7 +546,10 @@ export class AdminService {
 
       const dpFields: Record<string, unknown> = {};
       if (dto.specialty !== undefined) dpFields.specialty = dto.specialty;
-      if (dto.licenseNumber !== undefined) dpFields.license_number = dto.licenseNumber;
+      if (dto.medicalAssociationNumber !== undefined) dpFields.medical_association_number = dto.medicalAssociationNumber;
+      if (dto.afm !== undefined) dpFields.afm = dto.afm;
+      if (dto.doctorPhone !== undefined) dpFields.phone = dto.doctorPhone;
+      if (dto.education !== undefined) dpFields.education = dto.education;
       if (dto.acceptsGessy !== undefined) dpFields.accepts_gessy = dto.acceptsGessy;
       if (dto.acceptsEopyy !== undefined) dpFields.accepts_eopyy = dto.acceptsEopyy;
 

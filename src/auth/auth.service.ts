@@ -50,7 +50,7 @@ export class AuthService {
    * Email check, slug check, and password hashing run in parallel.
    */
   async signup(dto: SignupDto) {
-    const baseSlug = dto.businessName.toLowerCase().trim().replace(/\s+/g, '-');
+    const baseSlug = dto.fullName.toLowerCase().trim().replace(/\s+/g, '-');
 
     const [existing, slugExists, hashed] = await Promise.all([
       this.prisma.user.findUnique({ where: { email: dto.email }, select: { id: true } }),
@@ -67,7 +67,7 @@ export class AuthService {
       data: {
         email: dto.email,
         password: hashed,
-        business_name: dto.businessName,
+        full_name: dto.fullName,
         booking_url_slug: slug,
         role,
         ...(role === 'DOCTOR'
@@ -77,7 +77,7 @@ export class AuthService {
       select: { id: true, email: true, role: true },
     });
 
-    await this.sendOtp(user.email, dto.businessName);
+    await this.sendOtp(user.email, dto.fullName);
 
     return { email: user.email, otpSent: true };
   }

@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import { PrismaService } from '@/database/prisma.service';
@@ -34,7 +34,31 @@ export class UsersService {
       if (conflict) throw new ConflictException('This URL slug is already taken');
     }
 
-    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.licenseNumber].some(
+    // Strip identity fields that are immutable while PENDING or APPROVED.
+    const currentProfile = await this.prisma.user.findUnique({
+      where: { id },
+      select: { role: true, doctor_profile: { select: { verification_status: true } } },
+    });
+    const verificationStatus = currentProfile?.doctor_profile?.verification_status;
+    const isDoctor = currentProfile?.role === 'DOCTOR';
+
+    if (isDoctor && (verificationStatus === 'APPROVED' || verificationStatus === 'PENDING')) {
+      const d = dto as Record<string, unknown>;
+      // Locked for both PENDING and APPROVED
+      delete d['fullName'];
+      delete d['specialty'];
+      delete d['medicalAssociationNumber'];
+      delete d['idPhotoUrl'];
+      delete d['termsAccepted'];
+    }
+    if (isDoctor && verificationStatus === 'APPROVED') {
+      const d = dto as Record<string, unknown>;
+      // Additionally locked only after APPROVED
+      delete d['afm'];
+      delete d['termsAccepted'];
+    }
+
+    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.medicalAssociationNumber, dto.afm, dto.idPhotoUrl, dto.termsAccepted, dto.doctorPhone, dto.education].some(
       (v) => v !== undefined,
     );
     const hasPatientFields = [dto.phone, dto.dateOfBirth, dto.gender, dto.amka, dto.eopyyNumber, dto.gessyNumber, dto.bloodType, dto.allergies].some(
@@ -48,7 +72,12 @@ export class UsersService {
           accepts_eopyy: dto.acceptsEopyy,
           latitude: dto.latitude,
           longitude: dto.longitude,
-          license_number: dto.licenseNumber,
+          medical_association_number: dto.medicalAssociationNumber,
+          afm: dto.afm,
+          id_photo_url: dto.idPhotoUrl,
+          terms_accepted: dto.termsAccepted,
+          phone: dto.doctorPhone,
+          education: dto.education,
           updated_at: new Date(),
         }
       : undefined;
@@ -145,8 +174,37 @@ export class UsersService {
     return { success: true };
   }
 
+  async uploadIdPhoto(userId: string, imageData: string): Promise<{ idPhotoUrl: string }> {
+    const profile = await this.prisma.doctorProfile.findUnique({
+      where: { user_id: userId },
+      select: { verification_status: true },
+    });
+    if (profile?.verification_status === 'APPROVED' || profile?.verification_status === 'PENDING') {
+      throw new ForbiddenException('Identity documents cannot be changed while under review or after approval');
+    }
+
+    if (imageData.length > 8 * 1024 * 1024) {
+      throw new BadRequestException('Image is too large. Please choose a smaller image.');
+    }
+
+    const result = await cloudinary.uploader.upload(imageData, {
+      public_id: `bookpro/id-photos/${userId}`,
+      overwrite: true,
+      invalidate: true,
+      resource_type: 'image',
+    });
+
+    const baseUrl = result.secure_url.replace(/\?.*$/, '');
+
+    await this.prisma.doctorProfile.update({
+      where: { user_id: userId },
+      data: { id_photo_url: baseUrl, updated_at: new Date() },
+    });
+
+    return { idPhotoUrl: baseUrl };
+  }
+
   async uploadAvatar(userId: string, imageData: string): Promise<{ avatarUrl: string }> {
-    // Reject payloads over ~8 MB (base64 of a ~6 MB raw image)
     if (imageData.length > 8 * 1024 * 1024) {
       throw new BadRequestException('Image is too large. Please choose a smaller image.');
     }
@@ -154,17 +212,18 @@ export class UsersService {
     const result = await cloudinary.uploader.upload(imageData, {
       public_id: `bookpro/avatars/${userId}`,
       overwrite: true,
+      invalidate: true,
       resource_type: 'image',
-      // Face-aware square crop at 400×400, delivered as JPEG
-      transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face', format: 'jpg', quality: 'auto:good' }],
     });
+
+    const baseUrl = result.secure_url.replace(/\?.*$/, '');
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { avatar_url: result.secure_url, updated_at: new Date() },
+      data: { avatar_url: baseUrl, updated_at: new Date() },
     });
 
-    return { avatarUrl: result.secure_url };
+    return { avatarUrl: baseUrl };
   }
 
   private sanitize(user: any) {

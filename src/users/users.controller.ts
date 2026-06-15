@@ -36,6 +36,12 @@ export class UsersController {
     return this.usersService.uploadAvatar(user.id, dto.imageData);
   }
 
+  @Post('me/id-photo')
+  @ApiOperation({ summary: 'Upload ID photo (base64) — stored on Cloudinary' })
+  uploadIdPhoto(@CurrentUser() user: { id: string }, @Body() dto: UploadAvatarDto) {
+    return this.usersService.uploadIdPhoto(user.id, dto.imageData);
+  }
+
   @Get('me/photos')
   @ApiOperation({ summary: 'List clinic photos for authenticated doctor' })
   getClinicPhotos(@CurrentUser() user: { id: string }) {

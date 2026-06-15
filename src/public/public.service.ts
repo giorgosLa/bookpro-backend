@@ -97,7 +97,7 @@ export class PublicService {
         buffer_minutes: true,
         is_suspended: true,
         doctor_profile: {
-          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, license_number: true },
+          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, medical_association_number: true },
         },
         services: {
           where: { is_active: true },
@@ -119,6 +119,8 @@ export class PublicService {
             name: true,
             address: true,
             phone: true,
+            lat: true,
+            lng: true,
             location_services: {
               where: { is_active: true },
               select: { service_id: true, price_override: true, duration_override: true },
@@ -187,6 +189,14 @@ export class PublicService {
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
    */
   async createBooking(dto: CreateBookingDto, patientId?: string) {
+    const doctor = await this.prisma.user.findUnique({
+      where: { id: dto.profileId },
+      select: { is_suspended: true, doctor_profile: { select: { verification_status: true } } },
+    });
+    if (!doctor || doctor.is_suspended || doctor.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new BadRequestException('Doctor is not available for booking');
+    }
+
     const service = await this.prisma.services.findUnique({
       where: { id: dto.serviceId, profile_id: dto.profileId },
     });
@@ -600,13 +610,15 @@ export class PublicService {
     return result;
   }
 
-  /** Resolves a booking slug to a profile id without fetching the full profile. */
+  /** Resolves a booking slug to a profile id, enforcing APPROVED + not suspended. */
   async resolveProfileId(slug: string): Promise<string> {
     const profile = await this.prisma.user.findUnique({
       where: { booking_url_slug: slug },
-      select: { id: true },
+      select: { id: true, is_suspended: true, doctor_profile: { select: { verification_status: true } } },
     });
-    if (!profile) throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new NotFoundException('Profile not found');
+    }
     return profile.id;
   }
 

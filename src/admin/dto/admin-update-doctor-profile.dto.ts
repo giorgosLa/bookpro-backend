@@ -27,11 +27,29 @@ export class AdminUpdateDoctorProfileDto {
   @MaxLength(200)
   address?: string;
 
-  @ApiPropertyOptional({ example: 'ΠΙΣ-12345' })
+  @ApiPropertyOptional({ example: 'ΙΣΑ-12345' })
   @IsOptional()
   @IsString()
   @MaxLength(50)
-  licenseNumber?: string;
+  medicalAssociationNumber?: string;
+
+  @ApiPropertyOptional({ example: '123456789' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(15)
+  afm?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  doctorPhone?: string;
+
+  @ApiPropertyOptional({ example: 'MD, PhD' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  education?: string;
 
   @ApiPropertyOptional({ enum: MedicalSpecialty })
   @IsOptional()

@@ -7,7 +7,7 @@ export class SignupDto {
   @IsString()
   @MinLength(2)
   @MaxLength(100)
-  businessName: string;
+  fullName: string;
 
   @ApiProperty({ example: 'user@example.com' })
   @IsEmail()

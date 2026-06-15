@@ -19,6 +19,18 @@ export class CreateServiceDto {
   @IsPositive()
   price?: number;
 
+  @ApiPropertyOptional({ example: 20.0 })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  priceMin?: number;
+
+  @ApiPropertyOptional({ example: 40.0 })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  priceMax?: number;
+
   @ApiProperty({ example: 30 })
   @IsNumber()
   @Min(5)

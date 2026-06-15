@@ -73,11 +73,40 @@ export class UpdateProfileDto {
   @Max(180)
   longitude?: number;
 
-  @ApiPropertyOptional({ example: 'ΠΙΣ-12345' })
+  @ApiPropertyOptional({ example: 'ΙΣΑ-12345' })
   @IsOptional()
   @IsString()
   @MaxLength(50)
-  licenseNumber?: string;
+  medicalAssociationNumber?: string;
+
+  @ApiPropertyOptional({ example: '12345678' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{8}$/, { message: 'Το ΑΦΜ πρέπει να αποτελείται από ακριβώς 8 ψηφία' })
+  afm?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  idPhotoUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  termsAccepted?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  doctorPhone?: string;
+
+  @ApiPropertyOptional({ example: 'MD, PhD' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  education?: string;
 
   // Patient profile fields
   @ApiPropertyOptional()

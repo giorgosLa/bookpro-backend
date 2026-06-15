@@ -120,6 +120,8 @@ model services {
   profile_id       String              @db.Uuid
   description      String?
   price            Decimal?            @db.Decimal
+  price_min        Decimal?            @db.Decimal
+  price_max        Decimal?            @db.Decimal
   is_active        Boolean             @default(true)
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
   updated_at       DateTime            @default(now()) @db.Timestamptz(6)
@@ -329,11 +331,16 @@ model DoctorProfile {
   longitude           Float?
   accepts_gessy       Boolean            @default(false)
   accepts_eopyy       Boolean            @default(false)
-  license_number      String?            @db.VarChar(50)
-  verification_status    VerificationStatus @default(PENDING)
-  rejection_reason       String?
-  admin_notes            String?
-  verification_checklist Json?
+  medical_association_number String?            @db.VarChar(50)
+  afm                        String?            @db.VarChar(15)
+  id_photo_url               String?            @db.VarChar(500)
+  terms_accepted             Boolean            @default(false)
+  phone                      String?            @db.VarChar(30)
+  education                  String?            @db.VarChar(500)
+  verification_status        VerificationStatus @default(PENDING)
+  rejection_reason           String?
+  admin_notes                String?
+  verification_checklist     Json?
   created_at             DateTime           @default(now()) @db.Timestamptz(6)
   updated_at             DateTime           @default(now()) @db.Timestamptz(6)
 
