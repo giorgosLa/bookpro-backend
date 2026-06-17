@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { VerifyDoctorDto } from './dto/verify-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminUpdateScheduleDto } from './dto/admin-update-schedule.dto';
-import { AdminCreateServiceDto, AdminUpdateServiceDto } from './dto/admin-service.dto';
+import { AdminCreateServiceCategoryDto, AdminCreateServiceDto, AdminUpdateServiceDto, AdminUpdateLocationDto, AdminCreateLocationDto, AdminAddLocationServiceDto, AdminUpdateLocationServiceDto } from './dto/admin-service.dto';
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
 import { BulkVerifyDto } from './dto/bulk-verify.dto';
 import { AdminVerificationDto } from './dto/admin-verification.dto';
@@ -108,7 +108,7 @@ export class AdminService {
   }
 
   async getDoctorDetail(doctorId: string) {
-    const [doctor, totalAppointments, upcomingAppointments, services] = await Promise.all([
+    const [doctor, totalAppointments, upcomingAppointments, services, categories, locations] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: doctorId },
         include: {
@@ -125,13 +125,31 @@ export class AdminService {
       }),
       this.prisma.services.findMany({
         where: { profile_id: doctorId, is_active: true },
-        select: { id: true, name: true, duration_minutes: true, price: true },
+        select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, category_id: true },
+      }),
+      this.prisma.service_categories.findMany({
+        where: { profile_id: doctorId },
+        select: { id: true, name: true, order: true },
+        orderBy: { order: 'asc' },
+      }),
+      this.prisma.locations.findMany({
+        where: { profile_id: doctorId },
+        include: {
+          working_hours: { orderBy: { day_of_week: 'asc' } },
+          location_services: {
+            where: { is_active: true },
+            include: {
+              service: { select: { id: true, name: true, duration_minutes: true, price: true } },
+            },
+          },
+        },
+        orderBy: { order: 'asc' },
       }),
     ]);
 
     if (!doctor) throw new NotFoundException('Doctor not found');
     const { password, ...safeDoctor } = doctor as any;
-    return { doctor: safeDoctor, totalAppointments, upcomingAppointments, services };
+    return { doctor: safeDoctor, totalAppointments, upcomingAppointments, services, categories, locations };
   }
 
   async getReviews() {
@@ -584,6 +602,23 @@ export class AdminService {
     return this.getDoctorDetail(doctorId);
   }
 
+  async createDoctorServiceCategory(doctorId: string, dto: AdminCreateServiceCategoryDto) {
+    await this.assertDoctor(doctorId);
+    const agg = await this.prisma.service_categories.aggregate({
+      where: { profile_id: doctorId },
+      _max: { order: true },
+    });
+    return this.prisma.service_categories.create({
+      data: {
+        id: uuidv4(),
+        profile_id: doctorId,
+        name: dto.name,
+        order: (agg._max.order ?? -1) + 1,
+      },
+      select: { id: true, name: true, order: true },
+    });
+  }
+
   async createDoctorService(doctorId: string, dto: AdminCreateServiceDto) {
     await this.assertDoctor(doctorId);
     return this.prisma.services.create({
@@ -593,9 +628,12 @@ export class AdminService {
         name: dto.name,
         description: dto.description ?? null,
         price: dto.price ?? null,
+        price_min: dto.priceMin ?? null,
+        price_max: dto.priceMax ?? null,
         duration_minutes: dto.durationMinutes,
+        ...(dto.categoryId ? { category_id: dto.categoryId } : {}),
       },
-      select: { id: true, name: true, duration_minutes: true, price: true, description: true, is_active: true },
+      select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, description: true, is_active: true, category_id: true },
     });
   }
 
@@ -610,11 +648,13 @@ export class AdminService {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.price !== undefined && { price: dto.price }),
+        ...(dto.priceMin !== undefined && { price_min: dto.priceMin }),
+        ...(dto.priceMax !== undefined && { price_max: dto.priceMax }),
         ...(dto.durationMinutes !== undefined && { duration_minutes: dto.durationMinutes }),
         ...(dto.isActive !== undefined && { is_active: dto.isActive }),
         updated_at: new Date(),
       },
-      select: { id: true, name: true, duration_minutes: true, price: true, description: true, is_active: true },
+      select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, description: true, is_active: true, category_id: true },
     });
   }
 
@@ -624,5 +664,147 @@ export class AdminService {
     if (svc.profile_id !== doctorId) throw new ForbiddenException();
     await this.prisma.services.delete({ where: { id: serviceId } });
     return { message: 'Service deleted' };
+  }
+
+  async deleteDoctorServiceCategory(doctorId: string, categoryId: string) {
+    const cat = await this.prisma.service_categories.findUnique({ where: { id: categoryId }, select: { profile_id: true } });
+    if (!cat) throw new NotFoundException('Category not found');
+    if (cat.profile_id !== doctorId) throw new ForbiddenException();
+    await this.prisma.service_categories.delete({ where: { id: categoryId } });
+    return { message: 'Category deleted' };
+  }
+
+  private readonly locationServiceInclude = {
+    service: { select: { id: true, name: true, duration_minutes: true, price: true } },
+  } as const;
+
+  async addLocationService(doctorId: string, locationId: string, dto: AdminAddLocationServiceDto) {
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (!loc) throw new NotFoundException('Location not found');
+    if (loc.profile_id !== doctorId) throw new ForbiddenException();
+
+    const svc = await this.prisma.services.findUnique({ where: { id: dto.serviceId }, select: { profile_id: true } });
+    if (!svc) throw new NotFoundException('Service not found');
+    if (svc.profile_id !== doctorId) throw new ForbiddenException();
+
+    return this.prisma.location_services.create({
+      data: {
+        id: uuidv4(),
+        location_id: locationId,
+        service_id: dto.serviceId,
+        price_override: dto.priceOverride ?? null,
+        duration_override: dto.durationOverride ?? null,
+        is_active: true,
+      },
+      include: this.locationServiceInclude,
+    });
+  }
+
+  async updateLocationService(doctorId: string, locationId: string, locServiceId: string, dto: AdminUpdateLocationServiceDto) {
+    const ls = await this.prisma.location_services.findUnique({ where: { id: locServiceId }, select: { location_id: true } });
+    if (!ls) throw new NotFoundException('Location service not found');
+    if (ls.location_id !== locationId) throw new ForbiddenException();
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (loc?.profile_id !== doctorId) throw new ForbiddenException();
+
+    return this.prisma.location_services.update({
+      where: { id: locServiceId },
+      data: {
+        ...(dto.priceOverride !== undefined && { price_override: dto.priceOverride }),
+        ...(dto.durationOverride !== undefined && { duration_override: dto.durationOverride }),
+      },
+      include: this.locationServiceInclude,
+    });
+  }
+
+  async removeLocationService(doctorId: string, locationId: string, locServiceId: string) {
+    const ls = await this.prisma.location_services.findUnique({ where: { id: locServiceId }, select: { location_id: true } });
+    if (!ls) throw new NotFoundException('Location service not found');
+    if (ls.location_id !== locationId) throw new ForbiddenException();
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (loc?.profile_id !== doctorId) throw new ForbiddenException();
+
+    await this.prisma.location_services.delete({ where: { id: locServiceId } });
+    return { message: 'Service removed from location' };
+  }
+
+  async createDoctorLocation(doctorId: string, dto: AdminCreateLocationDto) {
+    await this.assertDoctor(doctorId);
+    const agg = await this.prisma.locations.aggregate({
+      where: { profile_id: doctorId },
+      _max: { order: true },
+    });
+    return this.prisma.locations.create({
+      data: {
+        id: uuidv4(),
+        profile_id: doctorId,
+        name: dto.name,
+        address: dto.address ?? null,
+        phone: dto.phone ?? null,
+        lat: dto.lat ?? null,
+        lng: dto.lng ?? null,
+        is_active: true,
+        order: (agg._max.order ?? -1) + 1,
+      },
+      include: {
+        working_hours: true,
+        location_services: {
+          where: { is_active: true },
+          include: {
+            service: { select: { id: true, name: true, duration_minutes: true, price: true } },
+          },
+        },
+      },
+    });
+  }
+
+  async deleteDoctorLocation(doctorId: string, locationId: string) {
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (!loc) throw new NotFoundException('Location not found');
+    if (loc.profile_id !== doctorId) throw new ForbiddenException();
+    await this.prisma.locations.delete({ where: { id: locationId } });
+    return { message: 'Location deleted' };
+  }
+
+  async updateDoctorLocation(doctorId: string, locationId: string, dto: AdminUpdateLocationDto) {
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (!loc) throw new NotFoundException('Location not found');
+    if (loc.profile_id !== doctorId) throw new ForbiddenException();
+
+    return this.prisma.locations.update({
+      where: { id: locationId },
+      data: {
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.address !== undefined && { address: dto.address }),
+        ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+        ...(dto.lat !== undefined && { lat: dto.lat }),
+        ...(dto.lng !== undefined && { lng: dto.lng }),
+      },
+      select: { id: true, name: true, address: true, phone: true, is_active: true, order: true },
+    });
+  }
+
+  async updateDoctorLocationSchedule(doctorId: string, locationId: string, dto: AdminUpdateScheduleDto) {
+    const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
+    if (!loc) throw new NotFoundException('Location not found');
+    if (loc.profile_id !== doctorId) throw new ForbiddenException();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.working_hours.deleteMany({ where: { profile_id: doctorId, location_id: locationId } });
+      await tx.working_hours.createMany({
+        data: dto.schedule.map((s) => ({
+          id: uuidv4(),
+          profile_id: doctorId,
+          location_id: locationId,
+          day_of_week: s.dayOfWeek,
+          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
+          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
+          is_enabled: s.isEnabled,
+        })),
+      });
+    });
+
+    return this.getDoctorDetail(doctorId);
   }
 }

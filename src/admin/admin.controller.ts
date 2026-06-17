@@ -5,7 +5,7 @@ import { AdminGuard } from '@/common/guards/admin.guard';
 import { VerifyDoctorDto } from './dto/verify-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
 import { AdminUpdateScheduleDto } from './dto/admin-update-schedule.dto';
-import { AdminCreateServiceDto, AdminUpdateServiceDto } from './dto/admin-service.dto';
+import { AdminCreateServiceCategoryDto, AdminCreateServiceDto, AdminUpdateServiceDto, AdminUpdateLocationDto, AdminCreateLocationDto, AdminAddLocationServiceDto, AdminUpdateLocationServiceDto } from './dto/admin-service.dto';
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
 import { BulkVerifyDto } from './dto/bulk-verify.dto';
 import { AdminVerificationDto } from './dto/admin-verification.dto';
@@ -138,6 +138,15 @@ export class AdminController {
     return this.adminService.updateDoctorSchedule(id, dto);
   }
 
+  @Post('doctors/:id/service-categories')
+  @ApiOperation({ summary: 'Create a service category for a doctor' })
+  createDoctorServiceCategory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreateServiceCategoryDto,
+  ) {
+    return this.adminService.createDoctorServiceCategory(id, dto);
+  }
+
   @Post('doctors/:id/services')
   @ApiOperation({ summary: 'Add a service to a doctor' })
   createDoctorService(
@@ -164,5 +173,83 @@ export class AdminController {
     @Param('serviceId', ParseUUIDPipe) serviceId: string,
   ) {
     return this.adminService.deleteDoctorService(id, serviceId);
+  }
+
+  @Delete('doctors/:id/service-categories/:categoryId')
+  @ApiOperation({ summary: 'Delete a service category (services lose their category link)' })
+  deleteDoctorServiceCategory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('categoryId', ParseUUIDPipe) categoryId: string,
+  ) {
+    return this.adminService.deleteDoctorServiceCategory(id, categoryId);
+  }
+
+  @Post('doctors/:id/locations')
+  @ApiOperation({ summary: 'Create a new clinic location for a doctor' })
+  createDoctorLocation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreateLocationDto,
+  ) {
+    return this.adminService.createDoctorLocation(id, dto);
+  }
+
+  @Delete('doctors/:id/locations/:locationId')
+  @ApiOperation({ summary: 'Delete a clinic location' })
+  deleteDoctorLocation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+  ) {
+    return this.adminService.deleteDoctorLocation(id, locationId);
+  }
+
+  @Patch('doctors/:id/locations/:locationId')
+  @ApiOperation({ summary: 'Update a location (name, address, phone, isActive)' })
+  updateDoctorLocation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Body() dto: AdminUpdateLocationDto,
+  ) {
+    return this.adminService.updateDoctorLocation(id, locationId, dto);
+  }
+
+  @Post('doctors/:id/locations/:locationId/services')
+  @ApiOperation({ summary: 'Add a service to a location (with optional price/duration override)' })
+  addLocationService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Body() dto: AdminAddLocationServiceDto,
+  ) {
+    return this.adminService.addLocationService(id, locationId, dto);
+  }
+
+  @Patch('doctors/:id/locations/:locationId/services/:locServiceId')
+  @ApiOperation({ summary: 'Update location-service overrides (price, duration)' })
+  updateLocationService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Param('locServiceId', ParseUUIDPipe) locServiceId: string,
+    @Body() dto: AdminUpdateLocationServiceDto,
+  ) {
+    return this.adminService.updateLocationService(id, locationId, locServiceId, dto);
+  }
+
+  @Delete('doctors/:id/locations/:locationId/services/:locServiceId')
+  @ApiOperation({ summary: 'Remove a service from a location' })
+  removeLocationService(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Param('locServiceId', ParseUUIDPipe) locServiceId: string,
+  ) {
+    return this.adminService.removeLocationService(id, locationId, locServiceId);
+  }
+
+  @Post('doctors/:id/locations/:locationId/schedule')
+  @ApiOperation({ summary: 'Replace working hours for a specific clinic location' })
+  updateDoctorLocationSchedule(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Body() dto: AdminUpdateScheduleDto,
+  ) {
+    return this.adminService.updateDoctorLocationSchedule(id, locationId, dto);
   }
 }
