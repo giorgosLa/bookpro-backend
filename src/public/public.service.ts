@@ -97,7 +97,7 @@ export class PublicService {
         buffer_minutes: true,
         is_suspended: true,
         doctor_profile: {
-          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, medical_association_number: true },
+          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, medical_association_number: true, gender: true },
         },
         services: {
           where: { is_active: true },

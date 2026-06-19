@@ -337,6 +337,7 @@ model DoctorProfile {
   terms_accepted             Boolean            @default(false)
   phone                      String?            @db.VarChar(30)
   education                  String?            @db.VarChar(500)
+  gender                     Gender?
   verification_status        VerificationStatus @default(PENDING)
   rejection_reason           String?
   admin_notes                String?

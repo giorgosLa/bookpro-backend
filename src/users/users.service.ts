@@ -58,7 +58,7 @@ export class UsersService {
       delete d['termsAccepted'];
     }
 
-    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.medicalAssociationNumber, dto.afm, dto.idPhotoUrl, dto.termsAccepted, dto.doctorPhone, dto.education].some(
+    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.medicalAssociationNumber, dto.afm, dto.idPhotoUrl, dto.termsAccepted, dto.doctorPhone, dto.education, dto.doctorGender].some(
       (v) => v !== undefined,
     );
     const hasPatientFields = [dto.phone, dto.dateOfBirth, dto.gender, dto.amka, dto.eopyyNumber, dto.gessyNumber, dto.bloodType, dto.allergies].some(
@@ -78,6 +78,7 @@ export class UsersService {
           terms_accepted: dto.termsAccepted,
           phone: dto.doctorPhone,
           education: dto.education,
+          gender: dto.doctorGender,
           updated_at: new Date(),
         }
       : undefined;

@@ -18,7 +18,6 @@ export class AdminUpdateDoctorProfileDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(500)
   bio?: string;
 
   @ApiPropertyOptional()

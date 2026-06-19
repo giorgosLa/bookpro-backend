@@ -18,7 +18,6 @@ export class UpdateProfileDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(500)
   bio?: string;
 
   @ApiPropertyOptional()
@@ -107,6 +106,11 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(500)
   education?: string;
+
+  @ApiPropertyOptional({ enum: Gender })
+  @IsOptional()
+  @IsEnum(Gender)
+  doctorGender?: Gender;
 
   // Patient profile fields
   @ApiPropertyOptional()
