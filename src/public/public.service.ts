@@ -164,6 +164,7 @@ export class PublicService {
         where: {
           profile_id: profileId,
           date: { gte: subHours(dayStart, 12), lte: addHours(dayEnd, 12) },
+          OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
         },
       }),
       this.prisma.appointments.findMany({
@@ -412,7 +413,11 @@ export class PublicService {
         },
       }),
       this.prisma.blocked_time.findMany({
-        where: { profile_id: profileId, date: { gte: searchStart, lte: searchEnd } },
+        where: {
+          profile_id: profileId,
+          date: { gte: searchStart, lte: searchEnd },
+          OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+        },
       }),
       this.prisma.appointments.findMany({
         where: {
