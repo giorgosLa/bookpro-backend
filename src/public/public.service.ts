@@ -253,6 +253,7 @@ export class PublicService {
 
     // Push real-time notification to the doctor's SSE stream (fire-and-forget)
     this.events.emit(appointment.profile_id, {
+      type: 'new_appointment',
       id: appointment.id,
       profile_id: appointment.profile_id,
       service_id: appointment.service_id,
@@ -279,11 +280,13 @@ export class PublicService {
           : undefined;
     }
 
+    const doctor_profile = (appointment as any).profiles as any;
+
     this.email
       .sendBookingConfirmation({
         to: dto.clientEmail,
         clientName: dto.clientName,
-        businessName: (appointment as any).profiles?.business_name ?? 'BookPro',
+        businessName: doctor_profile?.business_name ?? doctor_profile?.full_name ?? 'BookPro',
         serviceName: service.name,
         date: dto.date,
         time: dto.time,
@@ -295,7 +298,21 @@ export class PublicService {
       })
       .catch(() => null);
 
-    return { success: true, appointmentId: appointment.id };
+    this.email
+      .sendNewAppointmentToDoctor({
+        to: doctor_profile?.email,
+        doctorName: doctor_profile?.full_name ?? doctor_profile?.business_name ?? 'Γιατρέ',
+        clientName: dto.clientName,
+        clientPhone: dto.clientPhone ?? null,
+        serviceName: service.name,
+        date: format(startTime, 'dd/MM/yyyy'),
+        time: format(startTime, 'HH:mm'),
+        notes: dto.notes ?? null,
+        appUrl,
+      })
+      .catch(() => null);
+
+    return { success: true, appointmentId: appointment.id, management_token: appointment.management_token };
   }
 
   /** Looks up a booking by its management token (included in confirmation emails for self-service actions). */
@@ -311,6 +328,7 @@ export class PublicService {
             business_name: true,
             avatar_url: true,
             booking_url_slug: true,
+            working_hours: true,
           },
         },
       },
@@ -336,14 +354,34 @@ export class PublicService {
       data: { status: 'cancelled', cancelled_by: 'client', updated_at: new Date() },
     });
 
+    this.events.emit(appt.profile_id, {
+      type: 'appointment_cancelled',
+      id: appt.id,
+      status: 'cancelled',
+      cancelled_by: 'client',
+    });
+
     const profile = appt.profiles as any;
-    const date = appt.start_time.toISOString().substring(0, 10);
-    const time = appt.start_time.toISOString().substring(11, 16);
+    const date = format(appt.start_time, 'dd/MM/yyyy');
+    const time = format(appt.start_time, 'HH:mm');
+    const businessName = profile.full_name ?? profile.business_name ?? 'Ο γιατρός σας';
+
     this.email
       .sendCancellationNotificationToDoctor({
         to: profile.email,
-        doctorName: profile.full_name ?? profile.business_name ?? 'Γιατρέ',
+        doctorName: businessName,
         clientName: appt.client_name,
+        serviceName: appt.services.name,
+        date,
+        time,
+      })
+      .catch(() => null);
+
+    this.email
+      .sendCancellationNotificationToPatient({
+        to: appt.client_email,
+        clientName: appt.client_name,
+        businessName,
         serviceName: appt.services.name,
         date,
         time,
@@ -357,7 +395,10 @@ export class PublicService {
   async rescheduleBooking(token: string, dto: RescheduleBookingDto) {
     const appt = await this.prisma.appointments.findUnique({
       where: { management_token: token },
-      include: { services: true },
+      include: {
+        services: true,
+        profiles: { select: { email: true, full_name: true, business_name: true } },
+      },
     });
     if (!appt) throw new NotFoundException('Booking not found');
     if (appt.status === 'cancelled') throw new BadRequestException('Cannot reschedule a cancelled booking');
@@ -366,7 +407,7 @@ export class PublicService {
     if (newStart < new Date()) throw new BadRequestException('Cannot reschedule to a slot in the past');
     const newEnd = addMinutes(newStart, appt.services.duration_minutes);
 
-    await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd);
+    await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, appt.location_id ?? undefined);
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -382,11 +423,49 @@ export class PublicService {
 
         await tx.appointments.update({
           where: { id: appt.id },
-          data: { start_time: newStart, end_time: newEnd, updated_at: new Date() },
+          data: { start_time: newStart, end_time: newEnd, status: 'pending', updated_at: new Date() },
         });
       },
       { isolationLevel: 'Serializable' },
     );
+
+    this.events.emit(appt.profile_id, {
+      type: 'appointment_rescheduled',
+      id: appt.id,
+      start_time: newStart,
+      end_time: newEnd,
+      status: 'pending',
+    });
+
+    const doctor = (appt as any).profiles as { email: string; full_name: string | null; business_name: string | null };
+    const businessName = doctor.full_name ?? doctor.business_name ?? 'Ο γιατρός σας';
+    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+
+    this.email
+      .sendRescheduleNotificationToDoctor({
+        to: doctor.email,
+        doctorName: businessName,
+        clientName: appt.client_name,
+        serviceName: appt.services.name,
+        oldDate: format(appt.start_time, 'dd/MM/yyyy'),
+        oldTime: format(appt.start_time, 'HH:mm'),
+        newDate: format(newStart, 'dd/MM/yyyy'),
+        newTime: format(newStart, 'HH:mm'),
+      })
+      .catch(() => null);
+
+    this.email
+      .sendRescheduleConfirmationToPatient({
+        to: appt.client_email,
+        clientName: appt.client_name,
+        businessName,
+        serviceName: appt.services.name,
+        newDate: format(newStart, 'dd/MM/yyyy'),
+        newTime: format(newStart, 'HH:mm'),
+        managementToken: appt.management_token,
+        appUrl,
+      })
+      .catch(() => null);
 
     return { message: 'Booking rescheduled' };
   }

@@ -50,7 +50,8 @@ export class EventsController {
     const sub = this.eventsService.getStream(user.id).subscribe({
       next: (data: any) => {
         try {
-          raw.write(`event: new_appointment\ndata: ${JSON.stringify(data)}\n\n`);
+          const eventName = data?.type ?? 'new_appointment';
+          raw.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
         } catch {
           clearInterval(ping);
           sub.unsubscribe();

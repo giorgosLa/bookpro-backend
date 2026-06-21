@@ -17,15 +17,20 @@ export class AppointmentsService {
     const now = new Date();
     const ninetyDaysAgo = subDays(now, 90);
 
+    const doctorInclude = {
+      services: { include: { service_category: true } },
+      location: { select: { name: true } },
+    } as const;
+
     const [upcoming, past] = await Promise.all([
       this.prisma.appointments.findMany({
         where: { profile_id: userId, start_time: { gte: now } },
-        include: { services: true },
+        include: doctorInclude,
         orderBy: { start_time: 'asc' },
       }),
       this.prisma.appointments.findMany({
         where: { profile_id: userId, start_time: { lt: now, gte: ninetyDaysAgo } },
-        include: { services: true },
+        include: doctorInclude,
         orderBy: { start_time: 'desc' },
       }),
     ]);
@@ -37,36 +42,41 @@ export class AppointmentsService {
     const now = new Date();
     const ninetyDaysAgo = subDays(now, 90);
 
-    const [upcoming, past] = await Promise.all([
+    const patientSelect = {
+      services: true,
+      profiles: {
+        select: { id: true, full_name: true, business_name: true, avatar_url: true, booking_url_slug: true },
+      },
+    } as const;
+
+    const [upcoming, pastRaw] = await Promise.all([
       this.prisma.appointments.findMany({
-        where: { patient_id: patientId, start_time: { gte: now } },
-        include: {
-          services: true,
-          profiles: {
-            select: { id: true, full_name: true, business_name: true, avatar_url: true, booking_url_slug: true },
-          },
-        },
+        where: { patient_id: patientId, start_time: { gte: now }, status: { not: 'cancelled' } },
+        include: patientSelect,
         orderBy: { start_time: 'asc' },
       }),
       this.prisma.appointments.findMany({
         where: { patient_id: patientId, start_time: { lt: now, gte: ninetyDaysAgo } },
-        include: {
-          services: true,
-          profiles: {
-            select: { id: true, full_name: true, business_name: true, avatar_url: true, booking_url_slug: true },
-          },
-        },
+        include: patientSelect,
         orderBy: { start_time: 'desc' },
       }),
     ]);
 
-    return { upcoming, past };
+    return {
+      upcoming,
+      completed: pastRaw.filter((a) => a.status === 'completed'),
+      cancelled: pastRaw.filter((a) => a.status === 'cancelled'),
+    };
   }
 
   async updateStatus(userId: string, appointmentId: string, dto: UpdateStatusDto) {
     const appt = await this.prisma.appointments.findUnique({
       where: { id: appointmentId },
-      include: { services: true, profiles: true },
+      include: {
+        services: true,
+        profiles: true,
+        location: { select: { name: true, address: true, lat: true, lng: true } },
+      },
     });
     if (!appt) throw new NotFoundException('Appointment not found');
     if (appt.profile_id !== userId) throw new ForbiddenException();
@@ -81,18 +91,43 @@ export class AppointmentsService {
       include: { services: true },
     });
 
+    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+    const businessName = appt.profiles.business_name ?? appt.profiles.full_name ?? 'Ο γιατρός σας';
+
     if (dto.status === AppointmentStatus.CONFIRMED) {
-      const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+      const loc = (appt as any).location as { name: string; address: string | null; lat: number | null; lng: number | null } | null;
+      let mapsUrl: string | undefined;
+      if (loc) {
+        mapsUrl = loc.lat && loc.lng
+          ? `https://www.google.com/maps?q=${loc.lat},${loc.lng}`
+          : loc.address
+            ? `https://maps.google.com/?q=${encodeURIComponent(loc.address)}`
+            : undefined;
+      }
       this.email.sendAppointmentConfirmedToPatient({
         to: appt.client_email,
         clientName: appt.client_name,
-        businessName: appt.profiles.business_name ?? appt.profiles.full_name ?? 'Ο γιατρός σας',
+        businessName,
         serviceName: appt.services.name,
         date: format(appt.start_time, 'dd/MM/yyyy'),
         time: format(appt.start_time, 'HH:mm'),
         managementToken: appt.management_token,
         appUrl,
-      });
+        locationName: loc?.name ?? undefined,
+        locationAddress: loc?.address ?? undefined,
+        mapsUrl,
+      }).catch(() => null);
+    }
+
+    if (dto.status === AppointmentStatus.CANCELLED) {
+      this.email.sendCancellationNotificationToPatient({
+        to: appt.client_email,
+        clientName: appt.client_name,
+        businessName,
+        serviceName: appt.services.name,
+        date: format(appt.start_time, 'dd/MM/yyyy'),
+        time: format(appt.start_time, 'HH:mm'),
+      }).catch(() => null);
     }
 
     return updated;

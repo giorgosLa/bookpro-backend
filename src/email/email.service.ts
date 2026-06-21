@@ -8,10 +8,62 @@ export class EmailService {
   private readonly from: string;
   private readonly logger = new Logger(EmailService.name);
 
-  constructor(private config: ConfigService) {
+  constructor(config: ConfigService) {
     this.resend = new Resend(config.get<string>('resend.apiKey'));
     this.from = config.get<string>('resend.fromEmail') ?? 'noreply@bookpro.gr';
   }
+
+  // ── Shared layout wrapper ─────────────────────────────────────────────────
+
+  private layout(body: string): string {
+    return `
+<!DOCTYPE html>
+<html lang="el">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;padding:40px 16px">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px">
+
+        <!-- Logo -->
+        <tr><td style="padding-bottom:24px">
+          <p style="margin:0;font-size:13px;font-weight:800;letter-spacing:0.12em;color:#94a3b8;text-transform:uppercase">BookPro</p>
+        </td></tr>
+
+        <!-- Card -->
+        <tr><td style="background:#ffffff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden">
+          ${body}
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding-top:24px">
+          <p style="margin:0;font-size:12px;color:#cbd5e1;text-align:center">
+            © BookPro · Δεν χρειάζεται απάντηση σε αυτό το email
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`.trim();
+  }
+
+  private row(label: string, value: string): string {
+    return `
+      <tr>
+        <td style="padding:14px 0;border-bottom:1px solid #f1f5f9">
+          <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;color:#94a3b8;text-transform:uppercase">${label}</p>
+          <p style="margin:5px 0 0;font-size:15px;font-weight:600;color:#0f172a">${value}</p>
+        </td>
+      </tr>`;
+  }
+
+  private btn(text: string, href: string): string {
+    return `<a href="${href}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:13px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:700;letter-spacing:0.01em">${text}</a>`;
+  }
+
+  // ── Emails ────────────────────────────────────────────────────────────────
 
   async sendBookingConfirmation(opts: {
     to: string;
@@ -28,54 +80,43 @@ export class EmailService {
   }) {
     const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
 
-    const locationBlock = opts.locationName
-      ? `
-        <tr>
-          <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
-            <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Τοποθεσία</p>
-            <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.locationName}</p>
-            ${opts.locationAddress ? `<p style="margin:2px 0 0;color:#64748b;font-size:13px">${opts.locationAddress}</p>` : ''}
-            ${opts.mapsUrl ? `<a href="${opts.mapsUrl}" style="display:inline-block;margin-top:8px;color:#2563eb;font-size:13px;font-weight:600;text-decoration:none">📍 Άνοιγμα στο Google Maps →</a>` : ''}
-          </td>
-        </tr>`
+    const locationRow = opts.locationName
+      ? this.row(
+          'Τοποθεσία',
+          opts.locationName +
+            (opts.locationAddress ? `<br><span style="font-size:13px;font-weight:400;color:#64748b">${opts.locationAddress}</span>` : '') +
+            (opts.mapsUrl ? `<br><a href="${opts.mapsUrl}" style="font-size:13px;color:#2563eb;font-weight:600;text-decoration:none;display:inline-block;margin-top:4px">Άνοιγμα στο χάρτη →</a>` : ''),
+        )
       : '';
 
     return this.send({
       to: opts.to,
-      subject: `Επιβεβαίωση ραντεβού – ${opts.businessName}`,
-      html: `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#ffffff">
-          <div style="background:#2563eb;padding:28px 32px;border-radius:12px 12px 0 0">
-            <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:800">Το ραντεβού σας επιβεβαιώθηκε!</h1>
-          </div>
-          <div style="padding:28px 32px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px">
-            <p style="color:#475569;font-size:15px;margin:0 0 20px">Γεια σας <strong>${opts.clientName}</strong>,</p>
-            <p style="color:#475569;font-size:15px;margin:0 0 20px">Το ραντεβού σας με <strong>${opts.businessName}</strong> έχει καταχωρηθεί επιτυχώς.</p>
-
-            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
-              <tr>
-                <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
-                  <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Υπηρεσία</p>
-                  <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.serviceName}</p>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:12px 0;border-bottom:1px solid #f1f5f9">
-                  <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Ημερομηνία & Ώρα</p>
-                  <p style="margin:4px 0 0;color:#1e293b;font-size:15px;font-weight:600">${opts.date} στις ${opts.time}</p>
-                </td>
-              </tr>
-              ${locationBlock}
-            </table>
-
-            <a href="${manageUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:13px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">
-              Διαχείριση ραντεβού
-            </a>
-
-            <p style="color:#94a3b8;font-size:12px;margin:24px 0 0">BookPro – Professional Booking Platform</p>
-          </div>
+      subject: `Αίτημα ραντεβού – ${opts.businessName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Αίτημα ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Το αίτημά σας<br>ελήφθη
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.clientName}</strong>, το αίτημά σας με <strong style="color:#0f172a">${opts.businessName}</strong>
+            αναμένει επιβεβαίωση. Θα λάβετε νέο email μόλις επιβεβαιωθεί.
+          </p>
         </div>
-      `,
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
+            ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d97706"></span>Αναμένει επιβεβαίωση</span>')}
+            ${locationRow}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          ${this.btn('Διαχείριση ραντεβού', manageUrl)}
+        </div>
+      `),
     });
   }
 
@@ -88,20 +129,218 @@ export class EmailService {
     time: string;
     managementToken: string;
     appUrl: string;
+    locationName?: string;
+    locationAddress?: string;
+    mapsUrl?: string;
+  }) {
+    const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
+
+    const locationRow = opts.locationName
+      ? this.row(
+          'Τοποθεσία',
+          opts.locationName +
+            (opts.locationAddress ? `<br><span style="font-size:13px;font-weight:400;color:#64748b">${opts.locationAddress}</span>` : '') +
+            (opts.mapsUrl ? `<br><a href="${opts.mapsUrl}" style="font-size:13px;color:#2563eb;font-weight:600;text-decoration:none;display:inline-block;margin-top:4px">Άνοιγμα στο χάρτη →</a>` : ''),
+        )
+      : '';
+
+    return this.send({
+      to: opts.to,
+      subject: `Επιβεβαίωση ραντεβού – ${opts.businessName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Επιβεβαίωση ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Το ραντεβού σας<br>επιβεβαιώθηκε
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.clientName}</strong>,
+            ο/η <strong style="color:#0f172a">${opts.businessName}</strong> επιβεβαίωσε το ραντεβού σας. Σας περιμένουμε!
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
+            ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#059669"></span>Επιβεβαιωμένο</span>')}
+            ${locationRow}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          ${this.btn('Διαχείριση ραντεβού', manageUrl)}
+        </div>
+      `),
+    });
+  }
+
+  async sendRescheduleConfirmationToPatient(opts: {
+    to: string;
+    clientName: string;
+    businessName: string;
+    serviceName: string;
+    newDate: string;
+    newTime: string;
+    managementToken: string;
+    appUrl: string;
   }) {
     const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
     return this.send({
       to: opts.to,
-      subject: `Επιβεβαίωση ραντεβού – ${opts.businessName}`,
-      html: `
-        <h2>Το ραντεβού σας επιβεβαιώθηκε!</h2>
-        <p>Γεια σας ${opts.clientName},</p>
-        <p>Ο/Η <strong>${opts.businessName}</strong> επιβεβαίωσε το ραντεβού σας για <strong>${opts.serviceName}</strong>.</p>
-        <p><strong>Ημερομηνία:</strong> ${opts.date}<br/>
-           <strong>Ώρα:</strong> ${opts.time}</p>
-        <p><a href="${manageUrl}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Διαχείριση ραντεβού</a></p>
-        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
-      `,
+      subject: `Αλλαγή ραντεβού – ${opts.businessName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Αλλαγή ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Η αλλαγή σας<br>καταγράφηκε
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.clientName}</strong>,
+            η νέα ώρα του ραντεβού σας με <strong style="color:#0f172a">${opts.businessName}</strong> καταγράφηκε και αναμένει επιβεβαίωση.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Νέα ημερομηνία & ώρα', `${opts.newDate} στις ${opts.newTime}`)}
+            ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d97706"></span>Αναμένει επιβεβαίωση</span>')}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          ${this.btn('Διαχείριση ραντεβού', manageUrl)}
+        </div>
+      `),
+    });
+  }
+
+  async sendNewAppointmentToDoctor(opts: {
+    to: string;
+    doctorName: string;
+    clientName: string;
+    clientPhone?: string | null;
+    serviceName: string;
+    date: string;
+    time: string;
+    notes?: string | null;
+    appUrl: string;
+  }) {
+    return this.send({
+      to: opts.to,
+      subject: `Νέο ραντεβού – ${opts.clientName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Νέο ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Νέο αίτημα κράτησης
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.doctorName}</strong>,
+            ο/η <strong style="color:#0f172a">${opts.clientName}</strong> έκανε κράτηση για <strong style="color:#0f172a">${opts.serviceName}</strong>.
+            Συνδεθείτε στο dashboard για να εγκρίνετε ή να απορρίψετε.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Ασθενής', opts.clientName)}
+            ${opts.clientPhone ? this.row('Τηλέφωνο', opts.clientPhone) : ''}
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & ώρα', `${opts.date} στις ${opts.time}`)}
+            ${opts.notes ? this.row('Σημειώσεις', opts.notes) : ''}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          ${this.btn('Άνοιγμα dashboard', `${opts.appUrl}/dashboard`)}
+        </div>
+      `),
+    });
+  }
+
+  async sendRescheduleNotificationToDoctor(opts: {
+    to: string;
+    doctorName: string;
+    clientName: string;
+    serviceName: string;
+    oldDate: string;
+    oldTime: string;
+    newDate: string;
+    newTime: string;
+  }) {
+    return this.send({
+      to: opts.to,
+      subject: `Αλλαγή ραντεβού – ${opts.clientName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Ενημέρωση ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Αλλαγή ώρας
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.doctorName}</strong>,
+            ο/η <strong style="color:#0f172a">${opts.clientName}</strong> άλλαξε την ώρα ραντεβού για <strong style="color:#0f172a">${opts.serviceName}</strong>.
+            Το ραντεβού αναμένει την έγκρισή σας.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            <tr>
+              <td style="padding:14px 0;border-bottom:1px solid #f1f5f9">
+                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;color:#94a3b8;text-transform:uppercase">Παλιά ώρα</p>
+                <p style="margin:5px 0 0;font-size:15px;font-weight:600;color:#94a3b8;text-decoration:line-through">${opts.oldDate} στις ${opts.oldTime}</p>
+              </td>
+            </tr>
+            ${this.row('Νέα ώρα', `${opts.newDate} στις ${opts.newTime}`)}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          <p style="margin:0;font-size:13px;color:#94a3b8">Συνδεθείτε στο dashboard για να εγκρίνετε ή να απορρίψετε.</p>
+        </div>
+      `),
+    });
+  }
+
+  async sendCancellationNotificationToPatient(opts: {
+    to: string;
+    clientName: string;
+    businessName: string;
+    serviceName: string;
+    date: string;
+    time: string;
+  }) {
+    return this.send({
+      to: opts.to,
+      subject: `Ακύρωση ραντεβού – ${opts.businessName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Ενημέρωση ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ακύρωση<br>ραντεβού
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.clientName}</strong>,
+            ο/η <strong style="color:#0f172a">${opts.businessName}</strong> ακύρωσε το ραντεβού σας.
+            Μπορείτε να κλείσετε νέο ραντεβού όποτε θέλετε.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
+            ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#94a3b8"></span>Ακυρώθηκε</span>')}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          <p style="margin:0;font-size:13px;color:#94a3b8">Για οποιαδήποτε απορία, επικοινωνήστε απευθείας με τον γιατρό.</p>
+        </div>
+      `),
     });
   }
 
@@ -116,15 +355,29 @@ export class EmailService {
     return this.send({
       to: opts.to,
       subject: `Ακύρωση ραντεβού – ${opts.clientName}`,
-      html: `
-        <h2>Ακύρωση ραντεβού</h2>
-        <p>Γεια σας ${opts.doctorName},</p>
-        <p>Ο/Η ασθενής <strong>${opts.clientName}</strong> ακύρωσε το ραντεβού του/της.</p>
-        <p><strong>Υπηρεσία:</strong> ${opts.serviceName}<br/>
-           <strong>Ημερομηνία:</strong> ${opts.date}<br/>
-           <strong>Ώρα:</strong> ${opts.time}</p>
-        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
-      `,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Ενημέρωση ραντεβού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ακύρωση ραντεβού
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.doctorName}</strong>,
+            ο/η <strong style="color:#0f172a">${opts.clientName}</strong> ακύρωσε το ραντεβού του/της.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          <p style="margin:0;font-size:13px;color:#94a3b8">Η ώρα είναι πλέον διαθέσιμη για νέα κράτηση.</p>
+        </div>
+      `),
     });
   }
 
@@ -132,13 +385,21 @@ export class EmailService {
     return this.send({
       to: opts.to,
       subject: 'Ο λογαριασμός σας εγκρίθηκε – BookPro',
-      html: `
-        <h2>Συγχαρητήρια, ${opts.name}!</h2>
-        <p>Ο λογαριασμός σας ως γιατρός έχει <strong>εγκριθεί</strong> από την ομάδα του BookPro.</p>
-        <p>Μπορείτε τώρα να δεχτείτε ραντεβού μέσω της πλατφόρμας.</p>
-        <p><a href="${opts.appUrl}/dashboard" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Μεταβείτε στο Dashboard</a></p>
-        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
-      `,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">BookPro</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ο λογαριασμός σας<br>εγκρίθηκε
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.name}</strong>,
+            η ομάδα του BookPro επαλήθευσε τα στοιχεία σας. Μπορείτε πλέον να δέχεστε ραντεβού.
+          </p>
+        </div>
+        <div style="padding:0 32px 32px">
+          ${this.btn('Μετάβαση στο Dashboard', `${opts.appUrl}/dashboard`)}
+        </div>
+      `),
     });
   }
 
@@ -146,59 +407,99 @@ export class EmailService {
     return this.send({
       to: opts.to,
       subject: 'Ενημέρωση για τον λογαριασμό σας – BookPro',
-      html: `
-        <h2>Ενημέρωση λογαριασμού</h2>
-        <p>Γεια σας ${opts.name},</p>
-        <p>Μετά από έλεγχο, ο λογαριασμός σας ως γιατρός <strong>δεν εγκρίθηκε</strong> αυτή τη φορά.</p>
-        ${opts.reason ? `<p><strong>Λόγος:</strong> ${opts.reason}</p>` : ''}
-        <p>Εάν πιστεύετε ότι πρόκειται για λάθος ή θέλετε να επικοινωνήσετε μαζί μας, απαντήστε σε αυτό το email.</p>
-        <p style="color:#64748b;font-size:13px">BookPro – Professional Booking Platform</p>
-      `,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">BookPro</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ενημέρωση<br>λογαριασμού
+          </h1>
+          <p style="margin:0 0 20px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.name}</strong>,
+            μετά από έλεγχο ο λογαριασμός σας δεν εγκρίθηκε αυτή τη φορά.
+          </p>
+          ${opts.reason ? `
+          <div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0;font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em">Λόγος</p>
+            <p style="margin:6px 0 0;font-size:14px;color:#475569">${opts.reason}</p>
+          </div>` : ''}
+          <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.6">
+            Εάν θέλετε να επικοινωνήσετε μαζί μας, απαντήστε σε αυτό το email.
+          </p>
+        </div>
+        <div style="padding:0 32px 32px">
+          ${this.btn('Υποβολή εκ νέου', `${opts.appUrl}/dashboard`)}
+        </div>
+      `),
     });
   }
 
   async sendEmailOtp(opts: { to: string; name: string; otp: string }) {
     return this.send({
       to: opts.to,
-      subject: `${opts.otp} – Κωδικός επαλήθευσης BookPro`,
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-          <h2 style="color:#1e293b;margin-bottom:8px">Επαλήθευση Email</h2>
-          <p style="color:#475569">Γεια σας ${opts.name},</p>
-          <p style="color:#475569">Χρησιμοποιήστε τον παρακάτω κωδικό για να επαληθεύσετε το email σας:</p>
-          <div style="background:#f1f5f9;border-radius:12px;padding:28px;text-align:center;margin:24px 0">
-            <span style="font-size:40px;font-weight:900;letter-spacing:14px;color:#1e293b;font-family:monospace">${opts.otp}</span>
-          </div>
-          <p style="color:#64748b;font-size:13px">Ο κωδικός λήγει σε <strong>10 λεπτά</strong>.</p>
-          <p style="color:#94a3b8;font-size:12px">Αν δεν δημιουργήσατε λογαριασμό στο BookPro, αγνοήστε αυτό το email.</p>
-          <p style="color:#94a3b8;font-size:12px">BookPro – Professional Booking Platform</p>
+      subject: `${opts.otp} – Κωδικός επαλήθευσης`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Επαλήθευση email</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ο κωδικός σας
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.name}</strong>,
+            χρησιμοποιήστε τον παρακάτω κωδικό για να επαληθεύσετε το email σας.
+          </p>
         </div>
-      `,
+
+        <div style="margin:0 32px 28px;background:#f8fafc;border-radius:10px;padding:28px;text-align:center;border:1px solid #e2e8f0">
+          <p style="margin:0;font-size:36px;font-weight:900;letter-spacing:16px;color:#0f172a;font-family:'Courier New',monospace">${opts.otp}</p>
+        </div>
+
+        <div style="padding:0 32px 32px">
+          <p style="margin:0;font-size:13px;color:#94a3b8">Λήγει σε <strong style="color:#64748b">10 λεπτά</strong>. Αν δεν ζητήσατε αυτό τον κωδικό, αγνοήστε το email.</p>
+        </div>
+      `),
     });
   }
 
   async sendPasswordReset(opts: { to: string; name: string; resetLink: string }) {
     return this.send({
       to: opts.to,
-      subject: 'Reset your BookPro password',
-      html: `
-        <h2>Password Reset Request</h2>
-        <p>Hi ${opts.name},</p>
-        <p>Click the button below to reset your password. This link expires in 1 hour.</p>
-        <p><a href="${opts.resetLink}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin-top:8px">Reset Password</a></p>
-        <p style="color:#64748b;font-size:13px">If you did not request this, please ignore this email.</p>
-      `,
+      subject: 'Επαναφορά κωδικού – BookPro',
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Ασφάλεια λογαριασμού</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Επαναφορά<br>κωδικού
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.name}</strong>,
+            λάβαμε αίτημα επαναφοράς κωδικού. Ο σύνδεσμος λήγει σε <strong style="color:#0f172a">1 ώρα</strong>.
+          </p>
+        </div>
+        <div style="padding:0 32px 28px">
+          ${this.btn('Επαναφορά κωδικού', opts.resetLink)}
+        </div>
+        <div style="padding:0 32px 32px;border-top:1px solid #f1f5f9">
+          <p style="margin:16px 0 0;font-size:13px;color:#94a3b8">Αν δεν ζητήσατε επαναφορά κωδικού, αγνοήστε αυτό το email.</p>
+        </div>
+      `),
     });
   }
 
   async sendWelcome(opts: { to: string; name: string }) {
     return this.send({
       to: opts.to,
-      subject: 'Welcome to BookPro!',
-      html: `
-        <h2>Welcome to BookPro, ${opts.name}!</h2>
-        <p>Your account is ready. Start by setting up your services and availability.</p>
-      `,
+      subject: 'Καλώς ήρθατε στο BookPro',
+      html: this.layout(`
+        <div style="padding:32px 32px 32px">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">BookPro</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Καλώς ήρθατε,<br>${opts.name}
+          </h1>
+          <p style="margin:0;font-size:15px;color:#64748b;line-height:1.6">
+            Ο λογαριασμός σας είναι έτοιμος. Ξεκινήστε ρυθμίζοντας τις υπηρεσίες και τα ωράρια σας.
+          </p>
+        </div>
+      `),
     });
   }
 

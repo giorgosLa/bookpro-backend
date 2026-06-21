@@ -41,14 +41,16 @@ export class PublicController {
   @ApiQuery({ name: 'date', example: '2026-06-15' })
   @ApiQuery({ name: 'duration', example: 30, type: Number })
   @ApiQuery({ name: 'locationId', required: false })
+  @ApiQuery({ name: 'excludeId', required: false, description: 'Appointment ID to exclude (used during reschedule so own slot stays available)' })
   async getSlots(
     @Param('slug') slug: string,
     @Query('date') date: string,
     @Query('duration') duration: number,
     @Query('locationId') locationId?: string,
+    @Query('excludeId') excludeId?: string,
   ) {
     const profileId = await this.publicService.resolveProfileId(slug);
-    return this.publicService.getSlots(profileId, date, Number(duration), undefined, locationId);
+    return this.publicService.getSlots(profileId, date, Number(duration), excludeId, locationId);
   }
 
   @Get('profile/:slug/availability-dates')
