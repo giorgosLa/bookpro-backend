@@ -37,14 +37,15 @@ export class UsersService {
     // Strip identity fields that are immutable while PENDING or APPROVED.
     const currentProfile = await this.prisma.user.findUnique({
       where: { id },
-      select: { role: true, doctor_profile: { select: { verification_status: true } } },
+      select: { role: true, doctor_profile: { select: { verification_status: true, terms_accepted: true } } },
     });
     const verificationStatus = currentProfile?.doctor_profile?.verification_status;
     const isDoctor = currentProfile?.role === 'DOCTOR';
+    const isUnderReview = verificationStatus === 'PENDING' && currentProfile?.doctor_profile?.terms_accepted;
 
-    if (isDoctor && (verificationStatus === 'APPROVED' || verificationStatus === 'PENDING')) {
+    if (isDoctor && (verificationStatus === 'APPROVED' || isUnderReview)) {
       const d = dto as Record<string, unknown>;
-      // Locked for both PENDING and APPROVED
+      // Locked while under review (submitted + PENDING) or after APPROVED
       delete d['fullName'];
       delete d['specialty'];
       delete d['medicalAssociationNumber'];
@@ -75,7 +76,7 @@ export class UsersService {
           medical_association_number: dto.medicalAssociationNumber,
           afm: dto.afm,
           id_photo_url: dto.idPhotoUrl,
-          terms_accepted: dto.termsAccepted,
+          // terms_accepted is only set via POST /users/me/resubmit, never via regular profile update
           phone: dto.doctorPhone,
           education: dto.education,
           gender: dto.doctorGender,
@@ -125,7 +126,7 @@ export class UsersService {
     }
     return this.prisma.doctorProfile.update({
       where: { user_id: userId },
-      data: { verification_status: 'PENDING', rejection_reason: null, updated_at: new Date() },
+      data: { verification_status: 'PENDING', rejection_reason: null, terms_accepted: true, updated_at: new Date() },
     });
   }
 
@@ -178,9 +179,10 @@ export class UsersService {
   async uploadIdPhoto(userId: string, imageData: string): Promise<{ idPhotoUrl: string }> {
     const profile = await this.prisma.doctorProfile.findUnique({
       where: { user_id: userId },
-      select: { verification_status: true },
+      select: { verification_status: true, terms_accepted: true },
     });
-    if (profile?.verification_status === 'APPROVED' || profile?.verification_status === 'PENDING') {
+    const isUnderReview = profile?.verification_status === 'PENDING' && profile?.terms_accepted;
+    if (profile?.verification_status === 'APPROVED' || isUnderReview) {
       throw new ForbiddenException('Identity documents cannot be changed while under review or after approval');
     }
 

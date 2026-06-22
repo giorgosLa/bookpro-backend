@@ -35,11 +35,82 @@ export class PublicService {
     private events: EventsService,
   ) {}
 
+  private static readonly SPECIALTY_LABELS: Record<string, string> = {
+    GENERAL_PRACTITIONER: 'Παθολόγος', CARDIOLOGIST: 'Καρδιολόγος', DERMATOLOGIST: 'Δερματολόγος',
+    ENDOCRINOLOGIST: 'Ενδοκρινολόγος', GASTROENTEROLOGIST: 'Γαστρεντερολόγος', NEUROLOGIST: 'Νευρολόγος',
+    OBSTETRICIAN_GYNECOLOGIST: 'Γυναικολόγος', OPHTHALMOLOGIST: 'Οφθαλμίατρος', ORTHOPEDIC_SURGEON: 'Ορθοπεδικός',
+    OTOLARYNGOLOGIST: 'Ωτορινολαρυγγολόγος', PEDIATRICIAN: 'Παιδίατρος', PSYCHIATRIST: 'Ψυχίατρος',
+    PULMONOLOGIST: 'Πνευμονολόγος', RADIOLOGIST: 'Ακτινολόγος', RHEUMATOLOGIST: 'Ρευματολόγος',
+    SURGEON: 'Χειρουργός', UROLOGIST: 'Ουρολόγος', DENTIST: 'Οδοντίατρος', ORTHODONTIST: 'Ορθοδοντικός',
+    PHYSIOTHERAPIST: 'Φυσιοθεραπευτής', PSYCHOLOGIST: 'Ψυχολόγος', NUTRITIONIST: 'Διαιτολόγος', OTHER: 'Άλλο',
+  };
+
+  async search(q: string) {
+    if (!q || q.trim().length < 2) return { specialties: [], doctors: [] };
+    const term = q.trim().toLowerCase();
+
+    const specialties = Object.entries(PublicService.SPECIALTY_LABELS)
+      .filter(([, label]) => label.toLowerCase().includes(term))
+      .slice(0, 4)
+      .map(([key, label]) => ({ key, label }));
+
+    const doctors = await this.prisma.user.findMany({
+      where: {
+        role: 'DOCTOR',
+        booking_url_slug: { not: null },
+        is_suspended: false,
+        doctor_profile: { verification_status: 'APPROVED' },
+        OR: [
+          { full_name: { contains: q.trim(), mode: 'insensitive' } },
+          { business_name: { contains: q.trim(), mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        full_name: true,
+        business_name: true,
+        avatar_url: true,
+        booking_url_slug: true,
+        doctor_profile: { select: { specialty: true } },
+      },
+      take: 5,
+    });
+
+    return {
+      specialties,
+      doctors: doctors.map((d) => ({
+        id: d.id,
+        name: d.business_name ?? d.full_name ?? '',
+        slug: d.booking_url_slug,
+        avatar: d.avatar_url,
+        specialty: d.doctor_profile?.specialty
+          ? (PublicService.SPECIALTY_LABELS[d.doctor_profile.specialty] ?? '')
+          : '',
+      })),
+    };
+  }
+
   /** Returns all registered doctors who have a booking slug. Optionally filters by specialty enum. */
-  async getDoctors(specialty?: string) {
+  async getDoctors(specialty?: string, location?: string) {
     const validSpecialty = specialty && Object.values(MedicalSpecialty).includes(specialty as MedicalSpecialty)
       ? (specialty as MedicalSpecialty)
       : undefined;
+
+    // Accent-insensitive location filter via unaccent extension
+    let locationIds: string[] | undefined;
+    if (location?.trim()) {
+      const term = `%${location.trim()}%`;
+      const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+        SELECT DISTINCT u.id
+        FROM profiles u
+        LEFT JOIN locations l ON l.profile_id = u.id AND l.is_active = true
+        WHERE
+          unaccent(u.address) ILIKE unaccent(${term})
+          OR unaccent(l.address) ILIKE unaccent(${term})
+      `;
+      locationIds = rows.map(r => r.id);
+      if (locationIds.length === 0) return [];
+    }
 
     const doctors = await this.prisma.user.findMany({
       where: {
@@ -50,6 +121,7 @@ export class PublicService {
           verification_status: 'APPROVED',
           ...(validSpecialty ? { specialty: validSpecialty } : {}),
         },
+        ...(locationIds ? { id: { in: locationIds } } : {}),
       },
       select: {
         id: true,
@@ -292,6 +364,7 @@ export class PublicService {
         time: dto.time,
         managementToken: appointment.management_token,
         appUrl,
+        refNumber: appointment.ref_number,
         locationName: location?.name,
         locationAddress: location?.address ?? undefined,
         mapsUrl,
@@ -309,6 +382,7 @@ export class PublicService {
         time: format(startTime, 'HH:mm'),
         notes: dto.notes ?? null,
         appUrl,
+        refNumber: appointment.ref_number,
       })
       .catch(() => null);
 
@@ -343,7 +417,7 @@ export class PublicService {
       where: { management_token: token },
       include: {
         services: true,
-        profiles: { select: { email: true, full_name: true, business_name: true } },
+        profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
       },
     });
     if (!appt) throw new NotFoundException('Booking not found');
@@ -374,17 +448,25 @@ export class PublicService {
         serviceName: appt.services.name,
         date,
         time,
+        refNumber: appt.ref_number,
       })
       .catch(() => null);
 
+    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+    const bookingUrl = profile.booking_url_slug
+      ? `${appUrl}/book/${profile.booking_url_slug}`
+      : undefined;
+
     this.email
-      .sendCancellationNotificationToPatient({
+      .sendPatientCancellationConfirmation({
         to: appt.client_email,
         clientName: appt.client_name,
         businessName,
         serviceName: appt.services.name,
         date,
         time,
+        refNumber: appt.ref_number,
+        bookingUrl,
       })
       .catch(() => null);
 
@@ -451,6 +533,7 @@ export class PublicService {
         oldTime: format(appt.start_time, 'HH:mm'),
         newDate: format(newStart, 'dd/MM/yyyy'),
         newTime: format(newStart, 'HH:mm'),
+        refNumber: appt.ref_number,
       })
       .catch(() => null);
 
@@ -464,6 +547,7 @@ export class PublicService {
         newTime: format(newStart, 'HH:mm'),
         managementToken: appt.management_token,
         appUrl,
+        refNumber: appt.ref_number,
       })
       .catch(() => null);
 

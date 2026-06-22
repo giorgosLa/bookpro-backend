@@ -81,6 +81,7 @@ model VerificationToken {
 
 model appointments {
   id                    String         @id @db.Uuid
+  ref_number            Int            @default(autoincrement())
   profile_id            String         @db.Uuid
   patient_id            String?        @db.Uuid
   service_id            String         @db.Uuid

@@ -74,6 +74,7 @@ export class EmailService {
     time: string;
     managementToken: string;
     appUrl: string;
+    refNumber?: number | null;
     locationName?: string;
     locationAddress?: string;
     mapsUrl?: string;
@@ -106,6 +107,7 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
             ${this.row('Υπηρεσία', opts.serviceName)}
             ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
             ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d97706"></span>Αναμένει επιβεβαίωση</span>')}
@@ -129,6 +131,7 @@ export class EmailService {
     time: string;
     managementToken: string;
     appUrl: string;
+    refNumber?: number | null;
     locationName?: string;
     locationAddress?: string;
     mapsUrl?: string;
@@ -161,6 +164,7 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
             ${this.row('Υπηρεσία', opts.serviceName)}
             ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
             ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#059669"></span>Επιβεβαιωμένο</span>')}
@@ -184,6 +188,7 @@ export class EmailService {
     newTime: string;
     managementToken: string;
     appUrl: string;
+    refNumber?: number | null;
   }) {
     const manageUrl = `${opts.appUrl}/manage/${opts.managementToken}`;
     return this.send({
@@ -203,6 +208,7 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
             ${this.row('Υπηρεσία', opts.serviceName)}
             ${this.row('Νέα ημερομηνία & ώρα', `${opts.newDate} στις ${opts.newTime}`)}
             ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#d97706"></span>Αναμένει επιβεβαίωση</span>')}
@@ -226,6 +232,7 @@ export class EmailService {
     time: string;
     notes?: string | null;
     appUrl: string;
+    refNumber?: number | null;
   }) {
     return this.send({
       to: opts.to,
@@ -245,6 +252,7 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
             ${this.row('Ασθενής', opts.clientName)}
             ${opts.clientPhone ? this.row('Τηλέφωνο', opts.clientPhone) : ''}
             ${this.row('Υπηρεσία', opts.serviceName)}
@@ -269,6 +277,7 @@ export class EmailService {
     oldTime: string;
     newDate: string;
     newTime: string;
+    refNumber?: number | null;
   }) {
     return this.send({
       to: opts.to,
@@ -288,6 +297,8 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
+            ${this.row('Ασθενής', opts.clientName)}
             <tr>
               <td style="padding:14px 0;border-bottom:1px solid #f1f5f9">
                 <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.08em;color:#94a3b8;text-transform:uppercase">Παλιά ώρα</p>
@@ -312,6 +323,7 @@ export class EmailService {
     serviceName: string;
     date: string;
     time: string;
+    refNumber?: number | null;
   }) {
     return this.send({
       to: opts.to,
@@ -331,6 +343,7 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
             ${this.row('Υπηρεσία', opts.serviceName)}
             ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
             ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#94a3b8"></span>Ακυρώθηκε</span>')}
@@ -351,6 +364,7 @@ export class EmailService {
     serviceName: string;
     date: string;
     time: string;
+    refNumber?: number | null;
   }) {
     return this.send({
       to: opts.to,
@@ -369,6 +383,8 @@ export class EmailService {
 
         <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
           <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
+            ${this.row('Ασθενής', opts.clientName)}
             ${this.row('Υπηρεσία', opts.serviceName)}
             ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
           </tbody>
@@ -376,6 +392,56 @@ export class EmailService {
 
         <div style="padding:28px 32px 32px">
           <p style="margin:0;font-size:13px;color:#94a3b8">Η ώρα είναι πλέον διαθέσιμη για νέα κράτηση.</p>
+        </div>
+      `),
+    });
+  }
+
+  async sendPatientCancellationConfirmation(opts: {
+    to: string;
+    clientName: string;
+    businessName: string;
+    serviceName: string;
+    date: string;
+    time: string;
+    refNumber?: number | null;
+    bookingUrl?: string;
+  }) {
+    return this.send({
+      to: opts.to,
+      subject: `Ακύρωση ραντεβού επιβεβαιώθηκε – ${opts.businessName}`,
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">Επιβεβαίωση ακύρωσης</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Ακυρώσατε<br>το ραντεβού σας
+          </h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.clientName}</strong>,
+            η ακύρωση του ραντεβού σας με
+            <strong style="color:#0f172a">${opts.businessName}</strong>
+            ολοκληρώθηκε επιτυχώς.
+          </p>
+        </div>
+
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #f1f5f9;padding:0 32px">
+          <tbody>
+            ${opts.refNumber != null ? this.row('Αριθμός ραντεβού', `<span style="font-family:monospace;font-weight:800">#${opts.refNumber}</span>`) : ''}
+            ${this.row('Υπηρεσία', opts.serviceName)}
+            ${this.row('Ημερομηνία & Ώρα', `${opts.date} στις ${opts.time}`)}
+            ${this.row('Κατάσταση', '<span style="display:inline-flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#f87171"></span>Ακυρώθηκε</span>')}
+          </tbody>
+        </table>
+
+        <div style="padding:28px 32px 32px">
+          ${opts.bookingUrl ? `
+          <p style="margin:0 0 20px;font-size:14px;color:#64748b">
+            Θέλετε να κλείσετε νέο ραντεβού;
+          </p>
+          ${this.btn('Κλείστε νέο ραντεβού', opts.bookingUrl)}
+          ` : `
+          <p style="margin:0;font-size:13px;color:#94a3b8">Μπορείτε να κλείσετε νέο ραντεβού όποτε θέλετε.</p>
+          `}
         </div>
       `),
     });

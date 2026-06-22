@@ -18,6 +18,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     await this.$connect();
+    await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS unaccent`;
     this.logger.log('Database connected');
   }
 

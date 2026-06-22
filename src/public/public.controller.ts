@@ -23,11 +23,19 @@ import { CurrentUser } from '@/common/decorators/current-user.decorator';
 export class PublicController {
   constructor(private readonly publicService: PublicService) {}
 
+  @Get('search')
+  @ApiOperation({ summary: 'Autocomplete: specialties + doctor names matching query' })
+  @ApiQuery({ name: 'q', required: true })
+  search(@Query('q') q: string) {
+    return this.publicService.search(q);
+  }
+
   @Get('doctors')
   @ApiOperation({ summary: 'List all registered doctors' })
   @ApiQuery({ name: 'specialty', required: false, description: 'Filter by MedicalSpecialty enum value' })
-  getDoctors(@Query('specialty') specialty?: string) {
-    return this.publicService.getDoctors(specialty);
+  @ApiQuery({ name: 'location', required: false, description: 'Filter by city/area (ILIKE on address and clinic locations)' })
+  getDoctors(@Query('specialty') specialty?: string, @Query('location') location?: string) {
+    return this.publicService.getDoctors(specialty, location);
   }
 
   @Get('profile/:slug')

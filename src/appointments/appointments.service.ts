@@ -113,6 +113,7 @@ export class AppointmentsService {
         time: format(appt.start_time, 'HH:mm'),
         managementToken: appt.management_token,
         appUrl,
+        refNumber: appt.ref_number,
         locationName: loc?.name ?? undefined,
         locationAddress: loc?.address ?? undefined,
         mapsUrl,
@@ -127,6 +128,7 @@ export class AppointmentsService {
         serviceName: appt.services.name,
         date: format(appt.start_time, 'dd/MM/yyyy'),
         time: format(appt.start_time, 'HH:mm'),
+        refNumber: appt.ref_number,
       }).catch(() => null);
     }
 
