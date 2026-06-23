@@ -386,6 +386,8 @@ export class PublicService {
       })
       .catch(() => null);
 
+    this.revalidateDoctorPage((appointment as any).profiles?.booking_url_slug);
+
     return { success: true, appointmentId: appointment.id, management_token: appointment.management_token };
   }
 
@@ -470,6 +472,8 @@ export class PublicService {
       })
       .catch(() => null);
 
+    this.revalidateDoctorPage(profile.booking_url_slug);
+
     return { message: 'Booking cancelled' };
   }
 
@@ -479,7 +483,7 @@ export class PublicService {
       where: { management_token: token },
       include: {
         services: true,
-        profiles: { select: { email: true, full_name: true, business_name: true } },
+        profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
       },
     });
     if (!appt) throw new NotFoundException('Booking not found');
@@ -550,6 +554,8 @@ export class PublicService {
         refNumber: appt.ref_number,
       })
       .catch(() => null);
+
+    this.revalidateDoctorPage((appt as any).profiles?.booking_url_slug);
 
     return { message: 'Booking rescheduled' };
   }
@@ -794,5 +800,18 @@ export class PublicService {
   private parseDate(dateStr: string): Date {
     const [y, m, d] = dateStr.split('-').map(Number);
     return new Date(y, m - 1, d);
+  }
+
+  /** Fire-and-forget: tells Next.js to purge the ISR cache for a doctor's public pages. */
+  private revalidateDoctorPage(slug: string | null | undefined): void {
+    if (!slug) return;
+    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+    const secret = this.config.get<string>('revalidateSecret') ?? '';
+    if (!secret) return;
+    fetch(`${appUrl}/api/revalidate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-revalidate-secret': secret },
+      body: JSON.stringify({ slug }),
+    }).catch(() => null);
   }
 }

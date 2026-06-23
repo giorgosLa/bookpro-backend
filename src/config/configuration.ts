@@ -3,6 +3,7 @@ export default () => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   appUrl: process.env.APP_URL ?? 'http://localhost:3000',
   apiUrl: process.env.API_URL ?? 'http://localhost:4000',
+  revalidateSecret: process.env.REVALIDATE_SECRET ?? '',
 
   database: {
     url: process.env.DATABASE_URL,
