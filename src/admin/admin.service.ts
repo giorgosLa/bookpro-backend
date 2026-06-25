@@ -66,7 +66,8 @@ export class AdminService {
       this.prisma.$queryRaw<[{ total: number }]>`
         SELECT COALESCE(SUM(s.price), 0)::float8 AS total
         FROM appointments a
-        JOIN services s ON a.service_id = s.id
+        JOIN appointment_services aps ON aps.appointment_id = a.id
+        JOIN services s ON aps.service_id = s.id
         WHERE a.status = 'completed'
       `,
     ]);
@@ -119,7 +120,7 @@ export class AdminService {
       this.prisma.appointments.count({ where: { profile_id: doctorId } }),
       this.prisma.appointments.findMany({
         where: { profile_id: doctorId, start_time: { gte: new Date() }, status: { not: 'cancelled' } },
-        include: { services: { select: { name: true } } },
+        include: { appointment_services: { include: { service: { select: { name: true } } } } },
         orderBy: { start_time: 'asc' },
         take: 5,
       }),
@@ -280,7 +281,7 @@ export class AdminService {
               doctor_profile: { select: { specialty: true } },
             },
           },
-          services: { select: { id: true, name: true, price: true, duration_minutes: true } },
+          appointment_services: { include: { service: { select: { id: true, name: true, price: true, duration_minutes: true } } } },
         },
         orderBy: { start_time: 'desc' },
         skip: (page - 1) * limit,
@@ -329,7 +330,8 @@ export class AdminService {
           COUNT(*)::int                               AS bookings,
           COALESCE(SUM(CASE WHEN a.status = 'completed' THEN s.price ELSE 0 END), 0)::float8 AS revenue
         FROM appointments a
-        LEFT JOIN services s ON a.service_id = s.id
+        LEFT JOIN appointment_services aps ON aps.appointment_id = a.id
+        LEFT JOIN services s ON aps.service_id = s.id
         WHERE a.start_time >= ${since}
         GROUP BY date
         ORDER BY date

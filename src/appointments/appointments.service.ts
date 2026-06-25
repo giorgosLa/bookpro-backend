@@ -18,17 +18,17 @@ export class AppointmentsService {
     const ninetyDaysAgo = subDays(now, 90);
 
     const doctorInclude = {
-      services: { include: { service_category: true } },
+      appointment_services: { include: { service: { include: { service_category: true } } } },
       location: { select: { name: true } },
-    } as const;
+    };
 
     const [upcoming, past] = await Promise.all([
-      this.prisma.appointments.findMany({
+      (this.prisma.appointments as any).findMany({
         where: { profile_id: userId, start_time: { gte: now } },
         include: doctorInclude,
         orderBy: { start_time: 'asc' },
       }),
-      this.prisma.appointments.findMany({
+      (this.prisma.appointments as any).findMany({
         where: { profile_id: userId, start_time: { lt: now, gte: ninetyDaysAgo } },
         include: doctorInclude,
         orderBy: { start_time: 'desc' },
@@ -43,19 +43,19 @@ export class AppointmentsService {
     const ninetyDaysAgo = subDays(now, 90);
 
     const patientSelect = {
-      services: true,
+      appointment_services: { include: { service: true } },
       profiles: {
         select: { id: true, full_name: true, business_name: true, avatar_url: true, booking_url_slug: true },
       },
-    } as const;
+    };
 
     const [upcoming, pastRaw] = await Promise.all([
-      this.prisma.appointments.findMany({
+      (this.prisma.appointments as any).findMany({
         where: { patient_id: patientId, start_time: { gte: now }, status: { not: 'cancelled' } },
         include: patientSelect,
         orderBy: { start_time: 'asc' },
       }),
-      this.prisma.appointments.findMany({
+      (this.prisma.appointments as any).findMany({
         where: { patient_id: patientId, start_time: { lt: now, gte: ninetyDaysAgo } },
         include: patientSelect,
         orderBy: { start_time: 'desc' },
@@ -64,16 +64,16 @@ export class AppointmentsService {
 
     return {
       upcoming,
-      completed: pastRaw.filter((a) => a.status === 'completed'),
-      cancelled: pastRaw.filter((a) => a.status === 'cancelled'),
+      completed: pastRaw.filter((a: any) => a.status === 'completed'),
+      cancelled: pastRaw.filter((a: any) => a.status === 'cancelled'),
     };
   }
 
   async updateStatus(userId: string, appointmentId: string, dto: UpdateStatusDto) {
-    const appt = await this.prisma.appointments.findUnique({
+    const appt = await (this.prisma.appointments as any).findUnique({
       where: { id: appointmentId },
       include: {
-        services: true,
+        appointment_services: { include: { service: true } },
         profiles: true,
         location: { select: { name: true, address: true, lat: true, lng: true } },
       },
@@ -81,18 +81,19 @@ export class AppointmentsService {
     if (!appt) throw new NotFoundException('Appointment not found');
     if (appt.profile_id !== userId) throw new ForbiddenException();
 
-    const updated = await this.prisma.appointments.update({
+    const updated = await (this.prisma.appointments as any).update({
       where: { id: appointmentId },
       data: {
         status: dto.status,
         cancelled_by: dto.status === 'cancelled' ? 'doctor' : null,
         updated_at: new Date(),
       },
-      include: { services: true },
+      include: { appointment_services: { include: { service: true } } },
     });
 
     const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
     const businessName = appt.profiles.business_name ?? appt.profiles.full_name ?? 'Ο γιατρός σας';
+    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(', ');
 
     if (dto.status === AppointmentStatus.CONFIRMED) {
       const loc = (appt as any).location as { name: string; address: string | null; lat: number | null; lng: number | null } | null;
@@ -108,7 +109,7 @@ export class AppointmentsService {
         to: appt.client_email,
         clientName: appt.client_name,
         businessName,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         date: format(appt.start_time, 'dd/MM/yyyy'),
         time: format(appt.start_time, 'HH:mm'),
         managementToken: appt.management_token,
@@ -125,7 +126,7 @@ export class AppointmentsService {
         to: appt.client_email,
         clientName: appt.client_name,
         businessName,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         date: format(appt.start_time, 'dd/MM/yyyy'),
         time: format(appt.start_time, 'HH:mm'),
         refNumber: appt.ref_number,

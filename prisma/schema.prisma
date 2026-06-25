@@ -84,7 +84,6 @@ model appointments {
   ref_number            Int            @default(autoincrement())
   profile_id            String         @db.Uuid
   patient_id            String?        @db.Uuid
-  service_id            String         @db.Uuid
   location_id           String?        @db.Uuid
   client_name           String
   client_email          String
@@ -102,18 +101,31 @@ model appointments {
   created_at            DateTime       @default(now()) @db.Timestamptz(6)
   updated_at            DateTime       @default(now()) @db.Timestamptz(6)
 
-  appointments       appointments?  @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
-  other_appointments appointments[] @relation("appointmentsToappointments")
-  profiles           User           @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  patient            User?          @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
-  services           services       @relation(fields: [service_id], references: [id], onDelete: Cascade)
-  location           locations?     @relation(fields: [location_id], references: [id], onDelete: SetNull)
-  review             Review?
+  appointments         appointments?        @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
+  other_appointments   appointments[]       @relation("appointmentsToappointments")
+  profiles             User                 @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  patient              User?                @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
+  appointment_services appointment_services[]
+  location             locations?           @relation(fields: [location_id], references: [id], onDelete: SetNull)
+  review               Review?
 
   @@index([profile_id, start_time])
   @@index([profile_id, status])
   @@index([patient_id])
   @@index([location_id])
+}
+
+model appointment_services {
+  id             String   @id @default(uuid()) @db.Uuid
+  appointment_id String   @db.Uuid
+  service_id     String   @db.Uuid
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  appointment appointments @relation(fields: [appointment_id], references: [id], onDelete: Cascade)
+  service     services     @relation(fields: [service_id], references: [id], onDelete: Cascade)
+
+  @@unique([appointment_id, service_id])
+  @@index([appointment_id])
 }
 
 model services {
@@ -129,10 +141,10 @@ model services {
   duration_minutes Int                 @default(30)
   name             String
   category_id      String?             @db.Uuid
-  appointments      appointments[]
-  profiles          User                @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  service_category  service_categories? @relation(fields: [category_id], references: [id], onDelete: SetNull)
-  location_services location_services[]
+  appointment_services appointment_services[]
+  profiles             User                @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  service_category     service_categories? @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  location_services    location_services[]
 
   @@index([profile_id])
   @@index([category_id])

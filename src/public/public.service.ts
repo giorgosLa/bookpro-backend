@@ -259,6 +259,7 @@ export class PublicService {
 
   /**
    * Creates a guest booking inside a SERIALIZABLE transaction to prevent double-booking.
+   * Accepts one or more serviceIds; total duration is the sum of all service durations.
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
    */
   async createBooking(dto: CreateBookingDto, patientId?: string) {
@@ -270,14 +271,15 @@ export class PublicService {
       throw new BadRequestException('Doctor is not available for booking');
     }
 
-    const service = await this.prisma.services.findUnique({
-      where: { id: dto.serviceId, profile_id: dto.profileId },
+    const services = await this.prisma.services.findMany({
+      where: { id: { in: dto.serviceIds }, profile_id: dto.profileId },
     });
-    if (!service) throw new BadRequestException('Service not found');
+    if (services.length !== dto.serviceIds.length) throw new BadRequestException('One or more services not found');
 
+    const totalDuration = services.reduce((sum, s) => sum + s.duration_minutes, 0);
     const startTime = new Date(`${dto.date}T${dto.time}:00`);
     if (startTime < new Date()) throw new BadRequestException('Cannot book a slot in the past');
-    const endTime = addMinutes(startTime, service.duration_minutes);
+    const endTime = addMinutes(startTime, totalDuration);
 
     await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, dto.locationId);
 
@@ -293,12 +295,11 @@ export class PublicService {
           });
           if (conflict) throw new ConflictException('This time slot is no longer available');
 
-          return tx.appointments.create({
+          return (tx.appointments as any).create({
             data: {
               id: uuidv4(),
               profile_id: dto.profileId,
               patient_id: patientId ?? null,
-              service_id: dto.serviceId,
               location_id: dto.locationId ?? null,
               client_name: dto.clientName,
               client_email: dto.clientEmail,
@@ -309,8 +310,11 @@ export class PublicService {
               status: 'pending',
               management_token: uuidv4(),
               notes: dto.notes ?? null,
+              appointment_services: {
+                create: dto.serviceIds.map((serviceId) => ({ id: uuidv4(), service_id: serviceId })),
+              },
             },
-            include: { services: true, profiles: true },
+            include: { profiles: true, appointment_services: { include: { service: true } } },
           });
         },
         { isolationLevel: 'Serializable' },
@@ -323,12 +327,14 @@ export class PublicService {
         : Promise.resolve(null),
     ]);
 
+    const serviceNames = services.map((s) => s.name).join(', ');
+    const doctor_profile = (appointment as any).profiles as any;
+
     // Push real-time notification to the doctor's SSE stream (fire-and-forget)
     this.events.emit(appointment.profile_id, {
       type: 'new_appointment',
       id: appointment.id,
       profile_id: appointment.profile_id,
-      service_id: appointment.service_id,
       client_name: appointment.client_name,
       client_email: appointment.client_email,
       client_phone: appointment.client_phone,
@@ -338,7 +344,7 @@ export class PublicService {
       status: appointment.status,
       notes: appointment.notes,
       management_token: appointment.management_token,
-      services: (appointment as any).services,
+      appointment_services: (appointment as any).appointment_services,
     });
 
     const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
@@ -352,14 +358,12 @@ export class PublicService {
           : undefined;
     }
 
-    const doctor_profile = (appointment as any).profiles as any;
-
     this.email
       .sendBookingConfirmation({
         to: dto.clientEmail,
         clientName: dto.clientName,
         businessName: doctor_profile?.business_name ?? doctor_profile?.full_name ?? 'BookPro',
-        serviceName: service.name,
+        serviceName: serviceNames,
         date: dto.date,
         time: dto.time,
         managementToken: appointment.management_token,
@@ -377,7 +381,7 @@ export class PublicService {
         doctorName: doctor_profile?.full_name ?? doctor_profile?.business_name ?? 'Γιατρέ',
         clientName: dto.clientName,
         clientPhone: dto.clientPhone ?? null,
-        serviceName: service.name,
+        serviceName: serviceNames,
         date: format(startTime, 'dd/MM/yyyy'),
         time: format(startTime, 'HH:mm'),
         notes: dto.notes ?? null,
@@ -391,10 +395,10 @@ export class PublicService {
 
   /** Looks up a booking by its management token (included in confirmation emails for self-service actions). */
   async getBookingByToken(token: string) {
-    const appt = await this.prisma.appointments.findUnique({
+    const appt = await (this.prisma.appointments as any).findUnique({
       where: { management_token: token },
       include: {
-        services: true,
+        appointment_services: { include: { service: true } },
         profiles: {
           select: {
             id: true,
@@ -413,10 +417,10 @@ export class PublicService {
 
   /** Cancels a booking via management token (client self-service, no auth required). */
   async cancelBooking(token: string) {
-    const appt = await this.prisma.appointments.findUnique({
+    const appt = await (this.prisma.appointments as any).findUnique({
       where: { management_token: token },
       include: {
-        services: true,
+        appointment_services: { include: { service: true } },
         profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
       },
     });
@@ -439,13 +443,14 @@ export class PublicService {
     const date = format(appt.start_time, 'dd/MM/yyyy');
     const time = format(appt.start_time, 'HH:mm');
     const businessName = profile.full_name ?? profile.business_name ?? 'Ο γιατρός σας';
+    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(', ');
 
     this.email
       .sendCancellationNotificationToDoctor({
         to: profile.email,
         doctorName: businessName,
         clientName: appt.client_name,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         date,
         time,
         refNumber: appt.ref_number,
@@ -462,7 +467,7 @@ export class PublicService {
         to: appt.client_email,
         clientName: appt.client_name,
         businessName,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         date,
         time,
         refNumber: appt.ref_number,
@@ -475,19 +480,23 @@ export class PublicService {
 
   /** Reschedules a booking via management token. Checks for conflicts at the new slot before saving. */
   async rescheduleBooking(token: string, dto: RescheduleBookingDto) {
-    const appt = await this.prisma.appointments.findUnique({
+    const appt = await (this.prisma.appointments as any).findUnique({
       where: { management_token: token },
       include: {
-        services: true,
+        appointment_services: { include: { service: true } },
         profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
       },
     });
     if (!appt) throw new NotFoundException('Booking not found');
     if (appt.status === 'cancelled') throw new BadRequestException('Cannot reschedule a cancelled booking');
 
+    const totalDuration = (appt.appointment_services as any[]).reduce(
+      (sum: number, as: any) => sum + (as.service.duration_minutes ?? 30),
+      0,
+    );
     const newStart = new Date(`${dto.date}T${dto.time}:00`);
     if (newStart < new Date()) throw new BadRequestException('Cannot reschedule to a slot in the past');
-    const newEnd = addMinutes(newStart, appt.services.duration_minutes);
+    const newEnd = addMinutes(newStart, totalDuration || 30);
 
     await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, appt.location_id ?? undefined);
 
@@ -522,13 +531,14 @@ export class PublicService {
     const doctor = (appt as any).profiles as { email: string; full_name: string | null; business_name: string | null };
     const businessName = doctor.full_name ?? doctor.business_name ?? 'Ο γιατρός σας';
     const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(', ');
 
     this.email
       .sendRescheduleNotificationToDoctor({
         to: doctor.email,
         doctorName: businessName,
         clientName: appt.client_name,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         oldDate: format(appt.start_time, 'dd/MM/yyyy'),
         oldTime: format(appt.start_time, 'HH:mm'),
         newDate: format(newStart, 'dd/MM/yyyy'),
@@ -542,7 +552,7 @@ export class PublicService {
         to: appt.client_email,
         clientName: appt.client_name,
         businessName,
-        serviceName: appt.services.name,
+        serviceName: serviceNames,
         newDate: format(newStart, 'dd/MM/yyyy'),
         newTime: format(newStart, 'HH:mm'),
         managementToken: appt.management_token,

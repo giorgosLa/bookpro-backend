@@ -36,7 +36,8 @@ export class AnalyticsService {
       this.prisma.$queryRaw<[{ total: number }]>`
         SELECT COALESCE(SUM(s.price), 0)::float8 AS total
         FROM appointments a
-        JOIN services s ON a.service_id = s.id
+        JOIN appointment_services aps ON aps.appointment_id = a.id
+        JOIN services s ON aps.service_id = s.id
         WHERE a.profile_id = ${userId}::uuid AND a.status = 'completed'
       `,
       this.prisma.$queryRaw<[{ count: bigint }]>`
@@ -47,14 +48,18 @@ export class AnalyticsService {
       `,
       this.prisma.appointments.findMany({
         where: { profile_id: userId, start_time: { gte: thirtyDaysAgo } },
-        select: { start_time: true, status: true, services: { select: { price: true } } },
+        include: {
+          appointment_services: { include: { service: { select: { price: true } } } },
+        },
         orderBy: { start_time: 'asc' },
       }),
-      this.prisma.appointments.groupBy({
-        by: ['service_id'],
-        where: { profile_id: userId },
-        _count: { id: true },
-      }),
+      this.prisma.$queryRaw<{ service_id: string; count: number }[]>`
+        SELECT aps.service_id::text, COUNT(DISTINCT a.id)::int AS count
+        FROM appointments a
+        JOIN appointment_services aps ON aps.appointment_id = a.id
+        WHERE a.profile_id = ${userId}::uuid
+        GROUP BY aps.service_id
+      `,
       this.prisma.services.findMany({
         where: { profile_id: userId },
         select: { id: true, name: true },
@@ -73,7 +78,11 @@ export class AnalyticsService {
       if (!dailyMap.has(date)) dailyMap.set(date, { bookings: 0, revenue: 0 });
       const entry = dailyMap.get(date)!;
       entry.bookings++;
-      if (a.status === 'completed') entry.revenue += Number(a.services?.price ?? 0);
+      if (a.status === 'completed') {
+        entry.revenue += a.appointment_services.reduce(
+          (sum, as) => sum + Number(as.service?.price ?? 0), 0,
+        );
+      }
     }
     const today = format(new Date(), 'yyyy-MM-dd');
     const pastDays = Array.from({ length: 30 }, (_, i) => {
@@ -91,7 +100,7 @@ export class AnalyticsService {
     const serviceNameMap = new Map(serviceNames.map((s) => [s.id, s.name]));
     const serviceDistribution = serviceGroups.map((g) => ({
       name: serviceNameMap.get(g.service_id) ?? 'Unknown',
-      count: g._count.id,
+      count: g.count,
     }));
 
     return {

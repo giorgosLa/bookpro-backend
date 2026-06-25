@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, Matches, MaxLength } from 'class-validator';
+import { IsString, IsEmail, IsOptional, Matches, MaxLength, IsArray, ArrayMinSize } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBookingDto {
@@ -6,9 +6,11 @@ export class CreateBookingDto {
   @IsString()
   profileId: string;
 
-  @ApiProperty()
-  @IsString()
-  serviceId: string;
+  @ApiProperty({ type: [String], description: 'One or more service IDs' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  serviceIds: string[];
 
   @ApiProperty()
   @IsString()
