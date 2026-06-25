@@ -22,6 +22,12 @@ import {
 } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { v4 as uuidv4 } from 'uuid';
+import { randomBytes } from 'crypto';
+
+function generateRefCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from(randomBytes(6), (b) => chars[b % chars.length]).join('');
+}
 
 export const availCache = new Map<string, { data: { date: string; firstSlot: string }[]; expiresAt: number }>()
 const AVAIL_TTL = 30 * 1000 // 30 seconds
@@ -283,42 +289,62 @@ export class PublicService {
 
     await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, dto.locationId);
 
-    const [appointment, location] = await Promise.all([
-      this.prisma.$transaction(
-        async (tx) => {
-          const conflict = await tx.appointments.findFirst({
-            where: {
-              profile_id: dto.profileId,
-              status: { in: ['pending', 'confirmed'] },
-              AND: [{ start_time: { lt: endTime } }, { end_time: { gt: startTime } }],
-            },
-          });
-          if (conflict) throw new ConflictException('This time slot is no longer available');
+    const createAppointment = async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          return await this.prisma.$transaction(
+            async (tx) => {
+              const conflict = await tx.appointments.findFirst({
+                where: {
+                  profile_id: dto.profileId,
+                  status: { in: ['pending', 'confirmed'] },
+                  AND: [{ start_time: { lt: endTime } }, { end_time: { gt: startTime } }],
+                },
+              });
+              if (conflict) throw new ConflictException('This time slot is no longer available');
 
-          return (tx.appointments as any).create({
-            data: {
-              id: uuidv4(),
-              profile_id: dto.profileId,
-              patient_id: patientId ?? null,
-              location_id: dto.locationId ?? null,
-              client_name: dto.clientName,
-              client_email: dto.clientEmail,
-              client_phone: dto.clientPhone ?? null,
-              client_timezone: dto.clientTimezone ?? null,
-              start_time: startTime,
-              end_time: endTime,
-              status: 'pending',
-              management_token: uuidv4(),
-              notes: dto.notes ?? null,
-              appointment_services: {
-                create: dto.serviceIds.map((serviceId) => ({ id: uuidv4(), service_id: serviceId })),
-              },
+              return (tx.appointments as any).create({
+                data: {
+                  id: uuidv4(),
+                  ref_number: generateRefCode(),
+                  profile_id: dto.profileId,
+                  patient_id: patientId ?? null,
+                  location_id: dto.locationId ?? null,
+                  client_name: dto.clientName,
+                  client_email: dto.clientEmail,
+                  client_phone: dto.clientPhone ?? null,
+                  client_timezone: dto.clientTimezone ?? null,
+                  start_time: startTime,
+                  end_time: endTime,
+                  status: 'pending',
+                  management_token: uuidv4(),
+                  notes: dto.notes ?? null,
+                  appointment_services: {
+                    create: dto.serviceIds.map((serviceId) => ({ id: uuidv4(), service_id: serviceId })),
+                  },
+                },
+                include: { profiles: true, appointment_services: { include: { service: true } } },
+              });
             },
-            include: { profiles: true, appointment_services: { include: { service: true } } },
-          });
-        },
-        { isolationLevel: 'Serializable' },
-      ),
+            { isolationLevel: 'Serializable' },
+          );
+        } catch (err: any) {
+          const isRefNumberCollision =
+            err?.code === 'P2002' &&
+            (err?.meta?.target?.includes('ref_number') ||
+              err?.meta?.driverAdapterError?.cause?.constraint?.fields?.includes('ref_number'));
+          if (isRefNumberCollision) {
+            console.warn(`[ref_number] collision on attempt ${attempt + 1}, retrying...`);
+            if (attempt < 4) continue;
+            throw new BadRequestException('Could not generate unique booking reference, please try again');
+          }
+          throw err;
+        }
+      }
+    };
+
+    const [appointment, location] = await Promise.all([
+      createAppointment(),
       dto.locationId
         ? this.prisma.locations.findUnique({
             where: { id: dto.locationId },
