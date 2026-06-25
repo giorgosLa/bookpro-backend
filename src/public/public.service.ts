@@ -814,6 +814,116 @@ export class PublicService {
     return result;
   }
 
+  /**
+   * Batch version of getAvailabilityDates for multiple doctors at once.
+   * Replaces N×6 individual DB queries with 5 parallel queries regardless of doctor count.
+   * Only returns data for APPROVED + not suspended doctors (security enforced at query level).
+   * Returns { [slug]: { date, firstSlot }[] } keyed by booking_url_slug.
+   */
+  async getAvailabilityBatch(
+    slugs: string[],
+    limit = 6,
+  ): Promise<Record<string, { date: string; firstSlot: string }[]>> {
+    if (slugs.length === 0) return {};
+
+    // 1. Resolve slugs → profiles with security filter (APPROVED + not suspended)
+    const profiles = await this.prisma.user.findMany({
+      where: {
+        booking_url_slug: { in: slugs },
+        is_suspended: false,
+        doctor_profile: { verification_status: 'APPROVED' },
+      },
+      select: { id: true, booking_url_slug: true, timezone: true, buffer_minutes: true },
+    });
+
+    if (profiles.length === 0) return {};
+
+    const profileIds = profiles.map((p) => p.id);
+    const today = new Date();
+    const searchStart = subHours(startOfDay(today), 12);
+    const searchEnd = addHours(endOfDay(addDays(today, 20)), 12);
+
+    // 2–5. Fetch all availability data in 4 parallel queries (independent of doctor count)
+    const [allServices, allWorkingHours, allBlocked, allAppointments] = await Promise.all([
+      this.prisma.services.findMany({
+        where: { profile_id: { in: profileIds }, is_active: true },
+        select: { profile_id: true, duration_minutes: true },
+        orderBy: { duration_minutes: 'asc' },
+      }),
+      this.prisma.working_hours.findMany({
+        where: { profile_id: { in: profileIds }, is_enabled: true },
+      }),
+      this.prisma.blocked_time.findMany({
+        where: { profile_id: { in: profileIds }, date: { gte: searchStart, lte: searchEnd } },
+      }),
+      this.prisma.appointments.findMany({
+        where: {
+          profile_id: { in: profileIds },
+          status: { not: 'cancelled' },
+          start_time: { gte: searchStart, lt: searchEnd },
+        },
+        select: { profile_id: true, start_time: true, end_time: true },
+      }),
+    ]);
+
+    // Group all data by profile_id in memory (O(n) passes)
+    const minDuration = new Map<string, number>();
+    for (const s of allServices) {
+      if (!minDuration.has(s.profile_id)) minDuration.set(s.profile_id, s.duration_minutes);
+    }
+
+    const hoursByProfile = new Map<string, typeof allWorkingHours>();
+    for (const wh of allWorkingHours) {
+      const arr = hoursByProfile.get(wh.profile_id) ?? [];
+      arr.push(wh);
+      hoursByProfile.set(wh.profile_id, arr);
+    }
+
+    const blockedByProfile = new Map<string, typeof allBlocked>();
+    for (const b of allBlocked) {
+      const arr = blockedByProfile.get(b.profile_id) ?? [];
+      arr.push(b);
+      blockedByProfile.set(b.profile_id, arr);
+    }
+
+    const apptsByProfile = new Map<string, { profile_id: string; start_time: Date; end_time: Date }[]>();
+    for (const a of allAppointments) {
+      const arr = apptsByProfile.get(a.profile_id) ?? [];
+      arr.push(a);
+      apptsByProfile.set(a.profile_id, arr);
+    }
+
+    // Compute slots per profile entirely in memory
+    const result: Record<string, { date: string; firstSlot: string }[]> = {};
+    const MAX_DAYS = 20;
+
+    for (const profile of profiles) {
+      const slug = profile.booking_url_slug!;
+      const duration = minDuration.get(profile.id) ?? 30;
+      const hours = hoursByProfile.get(profile.id) ?? [];
+      const blocked = blockedByProfile.get(profile.id) ?? [];
+      const appointments = apptsByProfile.get(profile.id) ?? [];
+      const timezone = profile.timezone ?? 'UTC';
+      const bufferMinutes = profile.buffer_minutes ?? 0;
+
+      const dates: { date: string; firstSlot: string }[] = [];
+      let offset = 1;
+
+      while (dates.length < limit && offset <= MAX_DAYS) {
+        const d = addDays(today, offset++);
+        const wh = hours.find((h) => h.day_of_week === d.getDay());
+        if (!wh) continue;
+        const dateStr = format(d, 'yyyy-MM-dd');
+        const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
+        if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
+      }
+
+      result[slug] = dates;
+    }
+
+    return result;
+  }
+
   /** Resolves a booking slug to a profile id, enforcing APPROVED + not suspended. */
   async resolveProfileId(slug: string): Promise<string> {
     const profile = await this.prisma.user.findUnique({

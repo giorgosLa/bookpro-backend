@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { PublicService } from './public.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
+import { BatchAvailabilityDto } from './dto/batch-availability.dto';
 import { Public } from '@/common/decorators/public.decorator';
 import { OptionalJwtAuthGuard } from '@/common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
@@ -36,6 +37,13 @@ export class PublicController {
   @ApiQuery({ name: 'location', required: false, description: 'Filter by city/area (ILIKE on address and clinic locations)' })
   getDoctors(@Query('specialty') specialty?: string, @Query('location') location?: string) {
     return this.publicService.getDoctors(specialty, location);
+  }
+
+  @Post('doctors/availability-batch')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Batch availability dates for multiple doctors — replaces N individual calls' })
+  getAvailabilityBatch(@Body() dto: BatchAvailabilityDto) {
+    return this.publicService.getAvailabilityBatch(dto.slugs, dto.limit);
   }
 
   @Get('profile/:slug')
