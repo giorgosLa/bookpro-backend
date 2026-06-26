@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '@/database/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { invalidateDoctorCaches } from '@/public/cache';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -20,8 +21,8 @@ export class CategoriesService {
     });
   }
 
-  create(userId: string, dto: CreateCategoryDto) {
-    return this.prisma.service_categories.create({
+  async create(userId: string, dto: CreateCategoryDto) {
+    const result = await this.prisma.service_categories.create({
       data: {
         id: uuidv4(),
         profile_id: userId,
@@ -30,11 +31,13 @@ export class CategoriesService {
       },
       include: { services: true },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async update(userId: string, id: string, dto: UpdateCategoryDto) {
     await this.assertOwnership(userId, id);
-    return this.prisma.service_categories.update({
+    const result = await this.prisma.service_categories.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -42,11 +45,14 @@ export class CategoriesService {
       },
       include: { services: true },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async remove(userId: string, id: string) {
     await this.assertOwnership(userId, id);
     await this.prisma.service_categories.delete({ where: { id } });
+    invalidateDoctorCaches(userId);
     return { message: 'Category deleted' };
   }
 

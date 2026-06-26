@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 import { CreateBlockedTimeDto } from './dto/blocked-time.dto';
+import { invalidateDoctorCaches } from '@/public/cache';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -34,6 +35,7 @@ export class AvailabilityService {
         })),
       });
     });
+    invalidateDoctorCaches(userId);
     return this.getSchedule(userId);
   }
 
@@ -46,8 +48,8 @@ export class AvailabilityService {
   }
 
   /** Blocks a specific time range on a date (e.g. lunch break, holiday). */
-  createBlockedTime(userId: string, dto: CreateBlockedTimeDto) {
-    return this.prisma.blocked_time.create({
+  async createBlockedTime(userId: string, dto: CreateBlockedTimeDto) {
+    const result = await this.prisma.blocked_time.create({
       data: {
         id: uuidv4(),
         profile_id: userId,
@@ -57,6 +59,8 @@ export class AvailabilityService {
         reason: dto.reason ?? null,
       },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   /**
@@ -65,6 +69,7 @@ export class AvailabilityService {
    */
   async deleteBlockedTime(userId: string, id: string) {
     await this.prisma.blocked_time.deleteMany({ where: { id, profile_id: userId } });
+    invalidateDoctorCaches(userId);
     return { message: 'Blocked time removed' };
   }
 }

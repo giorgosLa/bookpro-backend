@@ -11,6 +11,7 @@ import { EmailService } from '@/email/email.service';
 import { EventsService } from '@/events/events.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
+import { availCache, AVAIL_TTL, doctorsCache, DOCTORS_TTL, profileCache, PROFILE_TTL } from './cache';
 import {
   addMinutes,
   addDays,
@@ -29,8 +30,6 @@ function generateRefCode(): string {
   return Array.from(randomBytes(6), (b) => chars[b % chars.length]).join('');
 }
 
-export const availCache = new Map<string, { data: { date: string; firstSlot: string }[]; expiresAt: number }>()
-const AVAIL_TTL = 30 * 1000 // 30 seconds
 
 @Injectable()
 export class PublicService {
@@ -98,6 +97,10 @@ export class PublicService {
 
   /** Returns all registered doctors who have a booking slug. Optionally filters by specialty enum. */
   async getDoctors(specialty?: string, location?: string) {
+    const cacheKey = `${specialty?.trim() || 'all'}:${location?.trim().toLowerCase() || 'all'}`;
+    const cached = doctorsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data as Awaited<ReturnType<typeof this.runDoctorsQuery>>;
+
     const validSpecialty = specialty && Object.values(MedicalSpecialty).includes(specialty as MedicalSpecialty)
       ? (specialty as MedicalSpecialty)
       : undefined;
@@ -118,7 +121,14 @@ export class PublicService {
       if (locationIds.length === 0) return [];
     }
 
-    const doctors = await this.prisma.user.findMany({
+    const doctors = await this.runDoctorsQuery(validSpecialty, locationIds);
+    doctorsCache.set(cacheKey, { data: doctors, expiresAt: Date.now() + DOCTORS_TTL });
+    return doctors;
+  }
+
+  /** The actual DB fetch for getDoctors — kept separate so the cache type can be inferred from it. */
+  private runDoctorsQuery(validSpecialty?: MedicalSpecialty, locationIds?: string[]) {
+    return this.prisma.user.findMany({
       where: {
         role: 'DOCTOR',
         booking_url_slug: { not: null },
@@ -156,12 +166,24 @@ export class PublicService {
       orderBy: { created_at: 'asc' },
       take: 100,
     });
-    return doctors;
   }
 
   /** Returns a doctor's public profile (with active services and working hours) by booking slug. */
   async getProfile(slug: string) {
-    const profile = await this.prisma.user.findUnique({
+    const cached = profileCache.get(slug);
+    if (cached && cached.expiresAt > Date.now()) return cached.data as NonNullable<Awaited<ReturnType<typeof this.runProfileQuery>>>;
+
+    const profile = await this.runProfileQuery(slug);
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new NotFoundException('Profile not found');
+    }
+    profileCache.set(slug, { data: profile, expiresAt: Date.now() + PROFILE_TTL });
+    return profile;
+  }
+
+  /** The actual DB fetch for getProfile — kept separate so the cache type can be inferred from it. */
+  private runProfileQuery(slug: string) {
+    return this.prisma.user.findUnique({
       where: { booking_url_slug: slug },
       select: {
         id: true,
@@ -208,10 +230,6 @@ export class PublicService {
         },
       },
     });
-    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new NotFoundException('Profile not found');
-    }
-    return profile;
   }
 
   /**

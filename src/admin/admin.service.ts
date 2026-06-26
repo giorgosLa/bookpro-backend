@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { subDays, startOfDay } from 'date-fns';
 import { PrismaService } from '@/database/prisma.service';
 import { EmailService } from '@/email/email.service';
+import { invalidateDoctorCaches } from '@/public/cache';
 import { ConfigService } from '@nestjs/config';
 import { VerifyDoctorDto } from './dto/verify-doctor.dto';
 import { AdminUpdateDoctorProfileDto } from './dto/admin-update-doctor-profile.dto';
@@ -222,6 +223,7 @@ export class AdminService {
       this.email.sendDoctorRejected({ to: doctor.email, name, reason: dto.reason, appUrl }).catch(() => {});
     }
 
+    invalidateDoctorCaches(doctorId); // verification status controls public visibility
     return updated;
   }
 
@@ -229,7 +231,7 @@ export class AdminService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true } });
     if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ADMIN') throw new ForbiddenException('Cannot suspend admin accounts');
-    return this.prisma.user.update({
+    const result = await this.prisma.user.update({
       where: { id: userId },
       data: {
         is_suspended: suspend,
@@ -238,6 +240,8 @@ export class AdminService {
       },
       select: { id: true, is_suspended: true },
     });
+    invalidateDoctorCaches(userId); // suspended users are hidden from public listings
+    return result;
   }
 
   async deleteUser(userId: string) {
@@ -245,6 +249,7 @@ export class AdminService {
     if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ADMIN') throw new ForbiddenException('Cannot delete admin accounts');
     await this.prisma.user.delete({ where: { id: userId } });
+    invalidateDoctorCaches(userId);
     return { message: 'User deleted' };
   }
 
@@ -450,6 +455,7 @@ export class AdminService {
         const name = doc.business_name || doc.full_name || doc.email;
         this.email.sendDoctorRejected({ to: doc.email, name, reason: dto.reason, appUrl }).catch(() => {});
       }
+      invalidateDoctorCaches();
       return { approved: 0, rejected: dto.ids.length, skipped: [] };
     }
 
@@ -497,6 +503,7 @@ export class AdminService {
         const name = doc.business_name || doc.full_name || doc.email;
         this.email.sendDoctorApproved({ to: doc.email, name, appUrl }).catch(() => {});
       }
+      invalidateDoctorCaches();
     }
 
     return { approved: approvedIds.length, skipped };
@@ -581,6 +588,7 @@ export class AdminService {
       }
     });
 
+    invalidateDoctorCaches(doctorId);
     return this.getDoctorDetail(doctorId);
   }
 
@@ -601,6 +609,7 @@ export class AdminService {
       });
     });
 
+    invalidateDoctorCaches(doctorId);
     return this.getDoctorDetail(doctorId);
   }
 
@@ -610,7 +619,7 @@ export class AdminService {
       where: { profile_id: doctorId },
       _max: { order: true },
     });
-    return this.prisma.service_categories.create({
+    const result = await this.prisma.service_categories.create({
       data: {
         id: uuidv4(),
         profile_id: doctorId,
@@ -619,11 +628,13 @@ export class AdminService {
       },
       select: { id: true, name: true, order: true },
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async createDoctorService(doctorId: string, dto: AdminCreateServiceDto) {
     await this.assertDoctor(doctorId);
-    return this.prisma.services.create({
+    const result = await this.prisma.services.create({
       data: {
         id: uuidv4(),
         profile_id: doctorId,
@@ -637,6 +648,8 @@ export class AdminService {
       },
       select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, description: true, is_active: true, category_id: true },
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async updateDoctorService(doctorId: string, serviceId: string, dto: AdminUpdateServiceDto) {
@@ -644,7 +657,7 @@ export class AdminService {
     if (!svc) throw new NotFoundException('Service not found');
     if (svc.profile_id !== doctorId) throw new ForbiddenException();
 
-    return this.prisma.services.update({
+    const result = await this.prisma.services.update({
       where: { id: serviceId },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -658,6 +671,8 @@ export class AdminService {
       },
       select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, description: true, is_active: true, category_id: true },
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async deleteDoctorService(doctorId: string, serviceId: string) {
@@ -665,6 +680,7 @@ export class AdminService {
     if (!svc) throw new NotFoundException('Service not found');
     if (svc.profile_id !== doctorId) throw new ForbiddenException();
     await this.prisma.services.delete({ where: { id: serviceId } });
+    invalidateDoctorCaches(doctorId);
     return { message: 'Service deleted' };
   }
 
@@ -673,6 +689,7 @@ export class AdminService {
     if (!cat) throw new NotFoundException('Category not found');
     if (cat.profile_id !== doctorId) throw new ForbiddenException();
     await this.prisma.service_categories.delete({ where: { id: categoryId } });
+    invalidateDoctorCaches(doctorId);
     return { message: 'Category deleted' };
   }
 
@@ -689,7 +706,7 @@ export class AdminService {
     if (!svc) throw new NotFoundException('Service not found');
     if (svc.profile_id !== doctorId) throw new ForbiddenException();
 
-    return this.prisma.location_services.create({
+    const result = await this.prisma.location_services.create({
       data: {
         id: uuidv4(),
         location_id: locationId,
@@ -700,6 +717,8 @@ export class AdminService {
       },
       include: this.locationServiceInclude,
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async updateLocationService(doctorId: string, locationId: string, locServiceId: string, dto: AdminUpdateLocationServiceDto) {
@@ -709,7 +728,7 @@ export class AdminService {
     const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
     if (loc?.profile_id !== doctorId) throw new ForbiddenException();
 
-    return this.prisma.location_services.update({
+    const result = await this.prisma.location_services.update({
       where: { id: locServiceId },
       data: {
         ...(dto.priceOverride !== undefined && { price_override: dto.priceOverride }),
@@ -717,6 +736,8 @@ export class AdminService {
       },
       include: this.locationServiceInclude,
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async removeLocationService(doctorId: string, locationId: string, locServiceId: string) {
@@ -727,6 +748,7 @@ export class AdminService {
     if (loc?.profile_id !== doctorId) throw new ForbiddenException();
 
     await this.prisma.location_services.delete({ where: { id: locServiceId } });
+    invalidateDoctorCaches(doctorId);
     return { message: 'Service removed from location' };
   }
 
@@ -736,7 +758,7 @@ export class AdminService {
       where: { profile_id: doctorId },
       _max: { order: true },
     });
-    return this.prisma.locations.create({
+    const result = await this.prisma.locations.create({
       data: {
         id: uuidv4(),
         profile_id: doctorId,
@@ -758,6 +780,8 @@ export class AdminService {
         },
       },
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async deleteDoctorLocation(doctorId: string, locationId: string) {
@@ -765,6 +789,7 @@ export class AdminService {
     if (!loc) throw new NotFoundException('Location not found');
     if (loc.profile_id !== doctorId) throw new ForbiddenException();
     await this.prisma.locations.delete({ where: { id: locationId } });
+    invalidateDoctorCaches(doctorId);
     return { message: 'Location deleted' };
   }
 
@@ -773,7 +798,7 @@ export class AdminService {
     if (!loc) throw new NotFoundException('Location not found');
     if (loc.profile_id !== doctorId) throw new ForbiddenException();
 
-    return this.prisma.locations.update({
+    const result = await this.prisma.locations.update({
       where: { id: locationId },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -785,6 +810,8 @@ export class AdminService {
       },
       select: { id: true, name: true, address: true, phone: true, is_active: true, order: true },
     });
+    invalidateDoctorCaches(doctorId);
+    return result;
   }
 
   async updateDoctorLocationSchedule(doctorId: string, locationId: string, dto: AdminUpdateScheduleDto) {
@@ -807,6 +834,7 @@ export class AdminService {
       });
     });
 
+    invalidateDoctorCaches(doctorId);
     return this.getDoctorDetail(doctorId);
   }
 }

@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import { FastifyReply } from 'fastify';
 
 @Catch()
@@ -36,6 +37,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (status >= 500) {
       this.logger.error(`${request.url} → ${status}`, exception instanceof Error ? exception.stack : String(exception));
+      // Only report genuine server errors to Sentry — 4xx are expected client errors (noise).
+      Sentry.captureException(exception);
     }
 
     reply.status(status).send({

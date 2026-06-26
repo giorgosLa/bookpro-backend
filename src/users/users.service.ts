@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import { PrismaService } from '@/database/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { invalidateDoctorCaches } from '@/public/cache';
 
 @Injectable()
 export class UsersService {
@@ -115,6 +116,7 @@ export class UsersService {
       include: { doctor_profile: true, patient_profile: true },
     });
 
+    invalidateDoctorCaches(id);
     return this.sanitize(updated);
   }
 
@@ -160,9 +162,11 @@ export class UsersService {
       where: { profile_id: userId },
     });
 
-    return this.prisma.doctorPhoto.create({
+    const result = await this.prisma.doctorPhoto.create({
       data: { profile_id: userId, url, order: (agg._max.order ?? -1) + 1 },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async deleteClinicPhoto(userId: string, photoId: string) {
@@ -173,6 +177,7 @@ export class UsersService {
     if (match?.[1]) await cloudinary.uploader.destroy(match[1]);
 
     await this.prisma.doctorPhoto.delete({ where: { id: photoId } });
+    invalidateDoctorCaches(userId);
     return { success: true };
   }
 
@@ -226,6 +231,7 @@ export class UsersService {
       data: { avatar_url: baseUrl, updated_at: new Date() },
     });
 
+    invalidateDoctorCaches(userId);
     return { avatarUrl: baseUrl };
   }
 

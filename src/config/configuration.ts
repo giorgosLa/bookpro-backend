@@ -4,6 +4,8 @@ export default () => ({
   appUrl: process.env.APP_URL ?? 'http://localhost:3000',
   apiUrl: process.env.API_URL ?? 'http://localhost:4000',
 
+  sentryDsn: process.env.SENTRY_DSN,
+
   database: {
     url: process.env.DATABASE_URL,
     directUrl: process.env.DIRECT_URL,

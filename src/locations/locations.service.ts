@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { v4 as uuidv4 } from 'uuid';
-import { availCache } from '@/public/public.service';
+import { invalidateDoctorCaches } from '@/public/cache';
 import { CreateLocationDto, UpdateLocationDto } from './dto/create-location.dto';
 import {
   AddLocationServiceDto,
@@ -30,8 +30,8 @@ export class LocationsService {
     });
   }
 
-  create(userId: string, dto: CreateLocationDto) {
-    return this.prisma.locations.create({
+  async create(userId: string, dto: CreateLocationDto) {
+    const result = await this.prisma.locations.create({
       data: {
         id: uuidv4(),
         profile_id: userId,
@@ -43,11 +43,13 @@ export class LocationsService {
         order: dto.order ?? 0,
       },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async update(userId: string, locationId: string, dto: UpdateLocationDto) {
     await this.assertOwnership(userId, locationId);
-    return this.prisma.locations.update({
+    const result = await this.prisma.locations.update({
       where: { id: locationId },
       data: {
         name: dto.name,
@@ -60,11 +62,14 @@ export class LocationsService {
         updated_at: new Date(),
       },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async remove(userId: string, locationId: string) {
     await this.assertOwnership(userId, locationId);
     await this.prisma.locations.delete({ where: { id: locationId } });
+    invalidateDoctorCaches(userId);
     return { message: 'Location deleted' };
   }
 
@@ -94,7 +99,7 @@ export class LocationsService {
         })),
       });
     });
-    this.clearAvailCache(userId);
+    invalidateDoctorCaches(userId);
     return this.getSchedule(userId, locationId);
   }
 
@@ -121,7 +126,7 @@ export class LocationsService {
         reason: dto.reason ?? null,
       },
     });
-    this.clearAvailCache(userId);
+    invalidateDoctorCaches(userId);
     return result;
   }
 
@@ -130,7 +135,7 @@ export class LocationsService {
     await this.prisma.blocked_time.deleteMany({
       where: { id: blockedId, location_id: locationId, profile_id: userId },
     });
-    this.clearAvailCache(userId);
+    invalidateDoctorCaches(userId);
     return { message: 'Blocked time removed' };
   }
 
@@ -162,7 +167,7 @@ export class LocationsService {
     });
     if (existing) throw new ConflictException('Service already added to this location');
 
-    return this.prisma.location_services.create({
+    const result = await this.prisma.location_services.create({
       data: {
         id: uuidv4(),
         location_id: locationId,
@@ -174,6 +179,8 @@ export class LocationsService {
         service: { select: { id: true, name: true, description: true, price: true, duration_minutes: true } },
       },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async updateService(userId: string, locationId: string, serviceId: string, dto: UpdateLocationServiceDto) {
@@ -183,7 +190,7 @@ export class LocationsService {
     });
     if (!pivot) throw new NotFoundException('Service not found in this location');
 
-    return this.prisma.location_services.update({
+    const result = await this.prisma.location_services.update({
       where: { location_id_service_id: { location_id: locationId, service_id: serviceId } },
       data: {
         price_override: dto.priceOverride !== undefined ? (dto.priceOverride ?? null) : undefined,
@@ -194,6 +201,8 @@ export class LocationsService {
         service: { select: { id: true, name: true, description: true, price: true, duration_minutes: true } },
       },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async removeService(userId: string, locationId: string, serviceId: string) {
@@ -201,6 +210,7 @@ export class LocationsService {
     await this.prisma.location_services.delete({
       where: { location_id_service_id: { location_id: locationId, service_id: serviceId } },
     });
+    invalidateDoctorCaches(userId);
     return { message: 'Service removed from location' };
   }
 
@@ -213,11 +223,5 @@ export class LocationsService {
     });
     if (!location) throw new NotFoundException('Location not found');
     if (location.profile_id !== userId) throw new ForbiddenException();
-  }
-
-  private clearAvailCache(userId: string) {
-    for (const key of availCache.keys()) {
-      if (key.startsWith(`${userId}:`)) availCache.delete(key);
-    }
   }
 }

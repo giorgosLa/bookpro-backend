@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '@/database/prisma.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+import { invalidateDoctorCaches } from '@/public/cache';
 import { v4 as uuidv4 } from 'uuid';
 
 const categorySelect = { select: { id: true, name: true } };
@@ -18,8 +19,8 @@ export class ServicesCatalogService {
     });
   }
 
-  create(userId: string, dto: CreateServiceDto) {
-    return this.prisma.services.create({
+  async create(userId: string, dto: CreateServiceDto) {
+    const result = await this.prisma.services.create({
       data: {
         id: uuidv4(),
         profile_id: userId,
@@ -33,11 +34,13 @@ export class ServicesCatalogService {
       },
       include: { service_category: categorySelect },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async update(userId: string, serviceId: string, dto: UpdateServiceDto) {
     await this.assertOwnership(userId, serviceId);
-    return this.prisma.services.update({
+    const result = await this.prisma.services.update({
       where: { id: serviceId },
       data: {
         name: dto.name,
@@ -52,11 +55,14 @@ export class ServicesCatalogService {
       },
       include: { service_category: categorySelect },
     });
+    invalidateDoctorCaches(userId);
+    return result;
   }
 
   async remove(userId: string, serviceId: string) {
     await this.assertOwnership(userId, serviceId);
     await this.prisma.services.delete({ where: { id: serviceId } });
+    invalidateDoctorCaches(userId);
     return { message: 'Service deleted' };
   }
 
