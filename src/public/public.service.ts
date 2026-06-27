@@ -22,8 +22,16 @@ import {
   addHours,
   subHours,
 } from 'date-fns';
-import { toZonedTime } from 'date-fns-tz';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  CLINIC_DEFAULT_TZ,
+  resolveTimezone,
+  wallClockToUtc,
+  todayStrInTz,
+  dateStrInTz,
+  dayOfWeekInTz,
+} from '@/common/time/tz.util';
+import { computeDaySlots, timeOfDay } from './slots.helper';
 import { randomBytes } from 'crypto';
 
 function generateRefCode(): string {
@@ -253,14 +261,25 @@ export class PublicService {
     }
     if (!wh) return [];
 
-    const dayStart = startOfDay(selectedDate);
-    const dayEnd = endOfDay(selectedDate);
+    const [profile, location] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
+      locationId
+        ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
+        : Promise.resolve(null),
+    ]);
+    const timezone = resolveTimezone(profile?.timezone, location?.timezone);
+    const bufferMinutes = profile?.buffer_minutes ?? 0;
 
-    const [blockedTimes, appointments, profile] = await Promise.all([
+    // Query bounds as the clinic-day's absolute instants (not server-local day),
+    // so we don't miss appointments near the day's edges across the UTC offset.
+    const dayStart = wallClockToUtc(dateStr, '00:00', timezone);
+    const dayEnd = wallClockToUtc(dateStr, '23:59:59', timezone);
+
+    const [blockedTimes, appointments] = await Promise.all([
       this.prisma.blocked_time.findMany({
         where: {
           profile_id: profileId,
-          date: { gte: subHours(dayStart, 12), lte: addHours(dayEnd, 12) },
+          date: { gte: subHours(dayStart, 24), lte: addHours(dayEnd, 24) },
           OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
         },
       }),
@@ -274,11 +293,8 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
-      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
     ]);
 
-    const timezone = profile?.timezone ?? 'UTC';
-    const bufferMinutes = profile?.buffer_minutes ?? 0;
     return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes);
   }
 
@@ -297,10 +313,15 @@ export class PublicService {
       data: { profileId: dto.profileId, locationId: dto.locationId, isGuest: !patientId },
     });
 
-    const doctor = await this.prisma.user.findUnique({
-      where: { id: dto.profileId },
-      select: { is_suspended: true, doctor_profile: { select: { verification_status: true } } },
-    });
+    const [doctor, bookingLocation] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: dto.profileId },
+        select: { is_suspended: true, timezone: true, doctor_profile: { select: { verification_status: true } } },
+      }),
+      dto.locationId
+        ? this.prisma.locations.findUnique({ where: { id: dto.locationId }, select: { timezone: true } })
+        : Promise.resolve(null),
+    ]);
     if (!doctor || doctor.is_suspended || doctor.doctor_profile?.verification_status !== 'APPROVED') {
       throw new BadRequestException('Doctor is not available for booking');
     }
@@ -310,12 +331,15 @@ export class PublicService {
     });
     if (services.length !== dto.serviceIds.length) throw new BadRequestException('One or more services not found');
 
+    // Interpret the patient's chosen wall-clock time in the clinic's timezone so
+    // the stored instant is correct regardless of the server's timezone.
+    const timezone = resolveTimezone(doctor.timezone, bookingLocation?.timezone);
     const totalDuration = services.reduce((sum, s) => sum + s.duration_minutes, 0);
-    const startTime = new Date(`${dto.date}T${dto.time}:00`);
+    const startTime = wallClockToUtc(dto.date, dto.time, timezone);
     if (startTime < new Date()) throw new BadRequestException('Cannot book a slot in the past');
     const endTime = addMinutes(startTime, totalDuration);
 
-    await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, dto.locationId);
+    await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, timezone, dto.locationId);
 
     const createAppointment = async () => {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -553,21 +577,26 @@ export class PublicService {
       where: { management_token: token },
       include: {
         appointment_services: { include: { service: true } },
-        profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
+        profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true, timezone: true } },
       },
     });
     if (!appt) throw new NotFoundException('Booking not found');
     if (appt.status === 'cancelled') throw new BadRequestException('Cannot reschedule a cancelled booking');
 
+    const location = appt.location_id
+      ? await this.prisma.locations.findUnique({ where: { id: appt.location_id }, select: { timezone: true } })
+      : null;
+    const timezone = resolveTimezone(appt.profiles?.timezone, location?.timezone);
+
     const totalDuration = (appt.appointment_services as any[]).reduce(
       (sum: number, as: any) => sum + (as.service.duration_minutes ?? 30),
       0,
     );
-    const newStart = new Date(`${dto.date}T${dto.time}:00`);
+    const newStart = wallClockToUtc(dto.date, dto.time, timezone);
     if (newStart < new Date()) throw new BadRequestException('Cannot reschedule to a slot in the past');
     const newEnd = addMinutes(newStart, totalDuration || 30);
 
-    await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, appt.location_id ?? undefined);
+    await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, timezone, appt.location_id ?? undefined);
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -646,7 +675,7 @@ export class PublicService {
     const searchStart = subHours(startOfDay(addDays(baseDate, -MAX)), 12);
     const searchEnd = addHours(endOfDay(addDays(baseDate, MAX)), 12);
 
-    const [workingHours, blockedTimes, appointments, profile] = await Promise.all([
+    const [workingHours, blockedTimes, appointments, profile, location] = await Promise.all([
       this.prisma.working_hours.findMany({
         where: {
           profile_id: profileId,
@@ -670,11 +699,14 @@ export class PublicService {
         select: { start_time: true, end_time: true },
       }),
       this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
+      locationId
+        ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
+        : Promise.resolve(null),
     ]);
 
-    const timezone = profile?.timezone ?? 'UTC';
+    const timezone = resolveTimezone(profile?.timezone, location?.timezone);
     const bufferMinutes = profile?.buffer_minutes ?? 0;
-    const today = startOfDay(toZonedTime(new Date(), timezone));
+    const todayStr = todayStrInTz(timezone);
 
     const getSlotsForDate = (d: Date): string[] => {
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
@@ -699,7 +731,7 @@ export class PublicService {
     offset = 1;
     while (prevDates.length < REQUIRED && offset <= MAX) {
       const d = addDays(baseDate, -offset++);
-      if (d < today) break;
+      if (format(d, 'yyyy-MM-dd') < todayStr) break;
       const s = getSlotsForDate(d);
       if (s.length > 0) {
         const key = format(d, 'yyyy-MM-dd');
@@ -717,82 +749,55 @@ export class PublicService {
    * and skips past slots when the requested date is today (Athens timezone).
    */
   private computeSlots(
-    date: Date,
+    _date: Date,
     wh: any,
     blockedTimes: any[],
     appointments: any[],
     duration: number,
     dateStr: string,
-    timezone: string = 'UTC',
+    timezone: string = CLINIC_DEFAULT_TZ,
     bufferMinutes: number = 0,
   ): string[] {
-    const [startH, startM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
-    const [endH, endM] = wh.end_time.toISOString().substring(11, 16).split(':').map(Number);
-
-    let current = new Date(date);
-    current.setHours(startH, startM, 0, 0);
-
-    const athensNow = toZonedTime(new Date(), timezone);
-    if (dateStr === format(athensNow, 'yyyy-MM-dd')) {
-      const nowOnDate = new Date(date);
-      nowOnDate.setHours(athensNow.getHours(), athensNow.getMinutes(), 0, 0);
-      if (nowOnDate > current) {
-        const skip = (30 - (nowOnDate.getMinutes() % 30)) % 30;
-        current = addMinutes(nowOnDate, skip);
-        current.setSeconds(0, 0);
-      }
-    }
-
-    const closing = new Date(date);
-    closing.setHours(endH, endM, 0, 0);
-
-    const dayStart = startOfDay(date);
-    const dayEnd = endOfDay(date);
-
-    const busy = [
-      ...blockedTimes
-        .filter((b) => b.date >= subHours(dayStart, 12) && b.date <= addHours(dayEnd, 12))
-        .map((b) => {
-          const s = new Date(date); s.setHours(b.start_time.getUTCHours(), b.start_time.getUTCMinutes(), 0, 0);
-          const e = new Date(date); e.setHours(b.end_time.getUTCHours(), b.end_time.getUTCMinutes(), 0, 0);
-          return { start: s.getTime(), end: e.getTime() };
-        }),
-      ...appointments
-        .filter((a) => a.start_time < dayEnd && a.end_time > dayStart)
-        .map((a) => ({ start: a.start_time.getTime(), end: a.end_time.getTime() + bufferMinutes * 60_000 })),
-    ];
-
-    const slots: string[] = [];
-    while (current < closing) {
-      const slotEnd = addMinutes(current, duration);
-      if (slotEnd > closing) break;
-      const s = current.getTime(), e = slotEnd.getTime();
-      if (!busy.some((b) => s < b.end - 1000 && e - 1000 > b.start)) {
-        slots.push(format(current, 'HH:mm'));
-      }
-      current = addMinutes(current, 30);
-    }
-    return slots;
+    // All slot math lives in a pure, timezone-explicit helper so it stays
+    // correct regardless of the server's local timezone (and is unit-testable).
+    return computeDaySlots({
+      dateStr,
+      tz: timezone,
+      wh,
+      blocked: blockedTimes,
+      appointments,
+      durationMinutes: duration,
+      bufferMinutes,
+    });
   }
 
-  /** Throws if startTime–endTime falls outside the doctor's working hours for that day. */
-  private async validateWithinWorkingHours(profileId: string, startTime: Date, endTime: Date, locationId?: string): Promise<void> {
+  /** Throws if startTime–endTime falls outside the doctor's working hours for that day (in clinic tz). */
+  private async validateWithinWorkingHours(
+    profileId: string,
+    startTime: Date,
+    endTime: Date,
+    timezone: string,
+    locationId?: string,
+  ): Promise<void> {
+    // Weekday + calendar date of the appointment as they read in the clinic's
+    // timezone — not server-local — so a near-midnight booking lands on the right day.
+    const dayOfWeek = dayOfWeekInTz(startTime, timezone);
+    const dateStr = dateStrInTz(startTime, timezone);
+
     // Try location-specific hours first; fall back to global (location_id: null)
     let wh = await this.prisma.working_hours.findFirst({
-      where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true, location_id: locationId ?? null },
+      where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: locationId ?? null },
     });
     if (!wh && locationId) {
       wh = await this.prisma.working_hours.findFirst({
-        where: { profile_id: profileId, day_of_week: startTime.getDay(), is_enabled: true, location_id: null },
+        where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
       });
     }
     if (!wh) throw new BadRequestException('Doctor does not work on this day');
 
-    const [openH, openM] = wh.start_time.toISOString().substring(11, 16).split(':').map(Number);
-    const [closeH, closeM] = wh.end_time.toISOString().substring(11, 16).split(':').map(Number);
-
-    const open = new Date(startTime); open.setHours(openH, openM, 0, 0);
-    const close = new Date(startTime); close.setHours(closeH, closeM, 0, 0);
+    // Build the day's open/close as absolute instants in the clinic timezone.
+    const open = wallClockToUtc(dateStr, timeOfDay(wh.start_time), timezone);
+    const close = wallClockToUtc(dateStr, timeOfDay(wh.end_time), timezone);
 
     if (startTime < open || endTime > close) {
       throw new BadRequestException('Requested time is outside working hours');
@@ -946,7 +951,7 @@ export class PublicService {
       const hours = hoursByProfile.get(profile.id) ?? [];
       const blocked = blockedByProfile.get(profile.id) ?? [];
       const appointments = apptsByProfile.get(profile.id) ?? [];
-      const timezone = profile.timezone ?? 'UTC';
+      const timezone = resolveTimezone(profile.timezone);
       const bufferMinutes = profile.buffer_minutes ?? 0;
 
       const dates: { date: string; firstSlot: string }[] = [];

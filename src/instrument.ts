@@ -1,6 +1,13 @@
 import 'dotenv/config'; // load .env before reading SENTRY_DSN (runs before ConfigModule)
 import * as Sentry from '@sentry/nestjs';
 
+// Pin the process timezone to the clinic's timezone. The slot-generation and
+// booking code interprets every wall-clock time (e.g. "10:00") in the server's
+// LOCAL timezone, so the server must run in Greece time — otherwise a 10:00
+// booking on a UTC production host is stored 3h off and shows as 13:00.
+// Set before any Date is constructed. Override with the TZ env var if needed.
+process.env.TZ = process.env.TZ || 'Europe/Athens';
+
 // Must be imported at the very top of main.ts, before any other module.
 // Only initializes when SENTRY_DSN is set, so local dev without a DSN is a no-op.
 if (process.env.SENTRY_DSN) {

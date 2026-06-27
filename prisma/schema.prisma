@@ -203,6 +203,10 @@ model locations {
   lat        Float?
   lng        Float?
   phone      String?
+  // IANA timezone for this clinic (e.g. "Europe/Athens", "Asia/Nicosia").
+  // Null → fall back to the doctor's profile timezone. Drives slot generation
+  // and booking instant conversion so multi-country clinics stay correct.
+  timezone   String?
   is_active  Boolean  @default(true)
   order      Int      @default(0)
   created_at DateTime @default(now()) @db.Timestamptz(6)
