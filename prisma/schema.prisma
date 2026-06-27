@@ -35,7 +35,6 @@ model User {
   created_at                 DateTime  @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime  @default(now()) @db.Timestamptz(6)
 
-  accounts              Account[]
   appointments          appointments[]
   patient_appointments  appointments[]    @relation("PatientAppointments")
   blocked_time          blocked_time[]
@@ -50,24 +49,6 @@ model User {
   doctor_photos         DoctorPhoto[]
 
   @@map("profiles")
-}
-
-model Account {
-  userId            String  @db.Uuid
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String?
-  access_token      String?
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String?
-  session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@id([provider, providerAccountId])
 }
 
 model VerificationToken {
@@ -95,14 +76,9 @@ model appointments {
   cancelled_by          String?
   notes                 String?
   management_token      String         @unique @db.Uuid
-  recurrence_pattern    String?
-  recurrence_end_date   DateTime?      @db.Date
-  parent_appointment_id String?        @db.Uuid
   created_at            DateTime       @default(now()) @db.Timestamptz(6)
   updated_at            DateTime       @default(now()) @db.Timestamptz(6)
 
-  appointments         appointments?        @relation("appointmentsToappointments", fields: [parent_appointment_id], references: [id])
-  other_appointments   appointments[]       @relation("appointmentsToappointments")
   profiles             User                 @relation(fields: [profile_id], references: [id], onDelete: Cascade)
   patient              User?                @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
   appointment_services appointment_services[]
@@ -268,21 +244,6 @@ model DoctorPhoto {
 
   @@index([profile_id])
   @@map("doctor_photos")
-}
-
-enum appointment_status {
-  pending
-  confirmed
-  cancelled
-  completed
-}
-
-enum subscription_status {
-  inactive
-  trialing
-  active
-  past_due
-  canceled
 }
 
 enum UserRole {
