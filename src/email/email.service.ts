@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import { Resend } from 'resend';
 
 @Injectable()
@@ -570,9 +571,32 @@ export class EmailService {
   }
 
   private async send(opts: { to: string; subject: string; html: string }) {
-    const { error } = await this.resend.emails.send({ from: this.from, ...opts });
-    if (error) {
-      this.logger.warn(`Email failed to ${opts.to}: ${error.message}`);
+    // Email is fire-and-forget at every call site (`.catch(() => null)`), so a
+    // silent failure here means a patient/doctor never gets notified and nobody
+    // finds out. Report to Sentry so delivery problems are visible.
+    try {
+      const { error } = await this.resend.emails.send({ from: this.from, ...opts });
+      if (error) {
+        this.logger.warn(`Email failed to ${opts.to}: ${error.message}`);
+        Sentry.captureException(new Error(`Resend rejected email: ${error.message}`), {
+          level: 'warning',
+          tags: { area: 'email', email_subject: opts.subject },
+          extra: { to: opts.to, resendError: error },
+        });
+      } else {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: `Sent "${opts.subject}" to ${opts.to}`,
+          level: 'info',
+        });
+      }
+    } catch (err) {
+      // Network / SDK throw (not a returned `error`) — also swallowed by callers.
+      this.logger.error(`Email threw for ${opts.to}: ${(err as Error).message}`);
+      Sentry.captureException(err, {
+        tags: { area: 'email', email_subject: opts.subject },
+        extra: { to: opts.to },
+      });
     }
   }
 }

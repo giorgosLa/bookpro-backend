@@ -27,4 +27,11 @@ export default () => ({
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
+
+  redis: {
+    // When set, SSE events are fanned out across instances via Redis Pub/Sub.
+    // When unset (local dev / single instance), the service falls back to
+    // in-process delivery only.
+    url: process.env.REDIS_URL,
+  },
 });

@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import { MedicalSpecialty } from '@prisma/client';
 import { PrismaService } from '@/database/prisma.service';
 import { EmailService } from '@/email/email.service';
@@ -287,6 +288,15 @@ export class PublicService {
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).
    */
   async createBooking(dto: CreateBookingDto, patientId?: string) {
+    // Core revenue flow — leave a trail so any error captured downstream
+    // (booking conflict, email failure, 500) carries the booking context.
+    Sentry.addBreadcrumb({
+      category: 'booking',
+      message: `Booking attempt for doctor ${dto.profileId} at ${dto.date} ${dto.time}`,
+      level: 'info',
+      data: { profileId: dto.profileId, locationId: dto.locationId, isGuest: !patientId },
+    });
+
     const doctor = await this.prisma.user.findUnique({
       where: { id: dto.profileId },
       select: { is_suspended: true, doctor_profile: { select: { verification_status: true } } },
@@ -353,6 +363,11 @@ export class PublicService {
               err?.meta?.driverAdapterError?.cause?.constraint?.fields?.includes('ref_number'));
           if (isRefNumberCollision) {
             console.warn(`[ref_number] collision on attempt ${attempt + 1}, retrying...`);
+            Sentry.addBreadcrumb({
+              category: 'booking',
+              message: `ref_number collision, retry ${attempt + 1}`,
+              level: 'warning',
+            });
             if (attempt < 4) continue;
             throw new BadRequestException('Could not generate unique booking reference, please try again');
           }
@@ -362,7 +377,10 @@ export class PublicService {
     };
 
     const [appointment, location] = await Promise.all([
-      createAppointment(),
+      Sentry.startSpan(
+        { name: 'booking.createAppointment', op: 'db.transaction' },
+        () => createAppointment(),
+      ),
       dto.locationId
         ? this.prisma.locations.findUnique({
             where: { id: dto.locationId },
@@ -433,6 +451,13 @@ export class PublicService {
         refNumber: appointment.ref_number,
       })
       .catch(() => null);
+
+    Sentry.addBreadcrumb({
+      category: 'booking',
+      message: `Booking created ${appointment.ref_number}`,
+      level: 'info',
+      data: { appointmentId: appointment.id },
+    });
 
     return { success: true, appointmentId: appointment.id, management_token: appointment.management_token };
   }
