@@ -17,7 +17,7 @@ model User {
   bio           String?
   address       String?
   avatar_url    String?
-  timezone      String?   @default("UTC")
+  timezone      String?   @default("Europe/Athens")
   booking_url_slug           String?   @unique
   buffer_minutes             Int       @default(0)
   google_calendar_enabled    Boolean?  @default(false)
