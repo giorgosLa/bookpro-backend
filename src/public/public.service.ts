@@ -837,28 +837,178 @@ export class PublicService {
    * When locationId is provided, only shows availability for that specific location.
    */
   async getAvailabilityDates(slug: string, limit: number = 6, locationId?: string): Promise<{ date: string; firstSlot: string }[]> {
-    const profileId = await this.resolveProfileId(slug);
+    // Stage 1: resolve the slug AND fetch timezone/buffer in a single round-trip.
+    // (Avoids resolveProfileId's separate query + findNearestDates' own user lookup.)
+    const profile = await this.prisma.user.findUnique({
+      where: { booking_url_slug: slug },
+      select: {
+        id: true,
+        is_suspended: true,
+        timezone: true,
+        buffer_minutes: true,
+        doctor_profile: { select: { verification_status: true } },
+      },
+    });
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new NotFoundException('Profile not found');
+    }
+    const profileId = profile.id;
+
     const cacheKey = `${profileId}:${limit}:${locationId ?? 'all'}`
     const cached = availCache.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) return cached.data
 
-    const [shortestService] = await this.prisma.services.findMany({
-      where: { profile_id: profileId, is_active: true },
-      select: { duration_minutes: true },
-      orderBy: { duration_minutes: 'asc' },
-      take: 1,
-    });
+    // Window: forward-only (this endpoint never needs past dates), ±12h padding so
+    // we don't drop appointments/blocks near the day edges across the UTC offset.
+    const MAX_DAYS = 20;
+    const today = new Date();
+    const searchStart = subHours(startOfDay(today), 12);
+    const searchEnd = addHours(endOfDay(addDays(today, MAX_DAYS)), 12);
+
+    // Stage 2: everything else in one parallel batch.
+    const [shortestService, workingHours, blockedTimes, appointments, location] = await Promise.all([
+      this.prisma.services.findFirst({
+        where: { profile_id: profileId, is_active: true },
+        select: { duration_minutes: true },
+        orderBy: { duration_minutes: 'asc' },
+      }),
+      this.prisma.working_hours.findMany({
+        where: {
+          profile_id: profileId,
+          is_enabled: true,
+          ...(locationId ? { location_id: locationId } : {}),
+        },
+      }),
+      this.prisma.blocked_time.findMany({
+        where: {
+          profile_id: profileId,
+          date: { gte: searchStart, lte: searchEnd },
+          OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+        },
+      }),
+      this.prisma.appointments.findMany({
+        where: {
+          profile_id: profileId,
+          status: { not: 'cancelled' },
+          start_time: { gte: searchStart, lt: searchEnd },
+        },
+        select: { start_time: true, end_time: true },
+      }),
+      locationId
+        ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
+        : Promise.resolve(null),
+    ]);
+
     const duration = shortestService?.duration_minutes ?? 30;
+    const timezone = resolveTimezone(profile.timezone, location?.timezone);
+    const bufferMinutes = profile.buffer_minutes ?? 0;
 
-    const baseDateStr = format(new Date(), 'yyyy-MM-dd');
-    const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration, locationId);
-
-    const result = nextDates
-      .slice(0, limit)
-      .map((date) => ({ date, firstSlot: slots[date]?.[0] ?? '' }))
-      .filter((d) => d.firstSlot !== '');
+    // Walk forward in memory until we have `limit` dates with at least one open slot.
+    const result: { date: string; firstSlot: string }[] = [];
+    for (let offset = 1; offset <= MAX_DAYS && result.length < limit; offset++) {
+      const d = addDays(today, offset);
+      const wh = workingHours.find((w) => w.day_of_week === d.getDay());
+      if (!wh) continue;
+      const dateStr = format(d, 'yyyy-MM-dd');
+      const slots = this.computeSlots(d, wh, blockedTimes, appointments, duration, dateStr, timezone, bufferMinutes);
+      if (slots.length > 0) result.push({ date: dateStr, firstSlot: slots[0] });
+    }
 
     availCache.set(cacheKey, { data: result, expiresAt: Date.now() + AVAIL_TTL });
+    return result;
+  }
+
+  /**
+   * All-locations version of getAvailabilityDates for ONE doctor: returns availability
+   * dates for every active location in a single request (2 DB round-trips total) instead
+   * of one request per location. Keyed by location id. Results are also written into
+   * availCache per location so the single-location endpoint serves them from cache.
+   */
+  async getAvailabilityDatesAllLocations(
+    slug: string,
+    limit: number = 6,
+  ): Promise<Record<string, { date: string; firstSlot: string }[]>> {
+    // Stage 1: resolve slug + timezone/buffer in one round-trip.
+    const profile = await this.prisma.user.findUnique({
+      where: { booking_url_slug: slug },
+      select: {
+        id: true,
+        is_suspended: true,
+        timezone: true,
+        buffer_minutes: true,
+        doctor_profile: { select: { verification_status: true } },
+      },
+    });
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
+      throw new NotFoundException('Profile not found');
+    }
+    const profileId = profile.id;
+
+    const MAX_DAYS = 20;
+    const today = new Date();
+    const searchStart = subHours(startOfDay(today), 12);
+    const searchEnd = addHours(endOfDay(addDays(today, MAX_DAYS)), 12);
+
+    // Stage 2: fetch every location's data for this doctor in one parallel batch.
+    const [shortestService, allHours, allBlocked, appointments, locations] = await Promise.all([
+      this.prisma.services.findFirst({
+        where: { profile_id: profileId, is_active: true },
+        select: { duration_minutes: true },
+        orderBy: { duration_minutes: 'asc' },
+      }),
+      this.prisma.working_hours.findMany({
+        where: { profile_id: profileId, is_enabled: true },
+      }),
+      this.prisma.blocked_time.findMany({
+        where: { profile_id: profileId, date: { gte: searchStart, lte: searchEnd } },
+      }),
+      this.prisma.appointments.findMany({
+        where: {
+          profile_id: profileId,
+          status: { not: 'cancelled' },
+          start_time: { gte: searchStart, lt: searchEnd },
+        },
+        select: { start_time: true, end_time: true },
+      }),
+      this.prisma.locations.findMany({
+        where: { profile_id: profileId, is_active: true },
+        select: { id: true, timezone: true },
+      }),
+    ]);
+
+    const duration = shortestService?.duration_minutes ?? 30;
+    const bufferMinutes = profile.buffer_minutes ?? 0;
+
+    const result: Record<string, { date: string; firstSlot: string }[]> = {};
+
+    for (const loc of locations) {
+      const cacheKey = `${profileId}:${limit}:${loc.id}`;
+      const cached = availCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        result[loc.id] = cached.data;
+        continue;
+      }
+
+      // Strict per-location hours (matches the single-location endpoint). Blocked
+      // includes both this location's blocks and the doctor's global (null) blocks.
+      const hours = allHours.filter((h) => h.location_id === loc.id);
+      const blocked = allBlocked.filter((b) => b.location_id === loc.id || b.location_id === null);
+      const timezone = resolveTimezone(profile.timezone, loc.timezone);
+
+      const dates: { date: string; firstSlot: string }[] = [];
+      for (let offset = 1; offset <= MAX_DAYS && dates.length < limit; offset++) {
+        const d = addDays(today, offset);
+        const wh = hours.find((w) => w.day_of_week === d.getDay());
+        if (!wh) continue;
+        const dateStr = format(d, 'yyyy-MM-dd');
+        const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
+        if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
+      }
+
+      availCache.set(cacheKey, { data: dates, expiresAt: Date.now() + AVAIL_TTL });
+      result[loc.id] = dates;
+    }
+
     return result;
   }
 

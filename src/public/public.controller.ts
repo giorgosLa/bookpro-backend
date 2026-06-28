@@ -81,6 +81,16 @@ export class PublicController {
     return this.publicService.getAvailabilityDates(slug, limit ? Number(limit) : 6, locationId);
   }
 
+  @Get('profile/:slug/availability-dates-all')
+  @ApiOperation({ summary: 'Availability dates for ALL of a doctor\'s locations in one call — for search cards' })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getAvailabilityDatesAllLocations(
+    @Param('slug') slug: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.publicService.getAvailabilityDatesAllLocations(slug, limit ? Number(limit) : 6);
+  }
+
   @Get('profile/:slug/next-slots')
   @ApiOperation({ summary: 'Get next N available slots for listing page' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
