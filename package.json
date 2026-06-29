@@ -12,7 +12,9 @@
     "test:watch": "TZ=UTC jest --watch",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node prisma/seed.ts",
+    "seed:doctors": "ts-node prisma/seed-doctors.ts"
   },
   "dependencies": {
     "@fastify/compress": "^6.5.0",

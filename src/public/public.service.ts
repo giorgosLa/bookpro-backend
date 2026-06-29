@@ -299,6 +299,79 @@ export class PublicService {
   }
 
   /**
+   * Batched version of getSlots: returns slots for `days` consecutive dates in a single
+   * request (one DB round-trip per table) instead of one /slots call per day. Used by the
+   * QuickBookModal's 7-day grid. Returns a map of `yyyy-MM-dd` → string[] of slot times.
+   */
+  async getSlotsRange(
+    profileId: string,
+    startDateStr: string,
+    days: number,
+    durationMinutes: number,
+    locationId?: string,
+  ): Promise<Record<string, string[]>> {
+    const startDate = this.parseDate(startDateStr);
+
+    const [profile, location] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
+      locationId
+        ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
+        : Promise.resolve(null),
+    ]);
+    const timezone = resolveTimezone(profile?.timezone, location?.timezone);
+    const bufferMinutes = profile?.buffer_minutes ?? 0;
+
+    // Whole-window bounds as absolute instants in the clinic timezone (±24h padding so
+    // appointments/blocks near the day edges aren't dropped across the UTC offset).
+    const lastDateStr = format(addDays(startDate, days - 1), 'yyyy-MM-dd');
+    const windowStart = subHours(wallClockToUtc(startDateStr, '00:00', timezone), 24);
+    const windowEnd = addHours(wallClockToUtc(lastDateStr, '23:59:59', timezone), 24);
+
+    const [workingHours, blockedTimes, appointments] = await Promise.all([
+      this.prisma.working_hours.findMany({
+        where: {
+          profile_id: profileId,
+          is_enabled: true,
+          OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+        },
+      }),
+      this.prisma.blocked_time.findMany({
+        where: {
+          profile_id: profileId,
+          date: { gte: windowStart, lte: windowEnd },
+          OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+        },
+      }),
+      this.prisma.appointments.findMany({
+        where: {
+          profile_id: profileId,
+          status: { not: 'cancelled' },
+          start_time: { lt: windowEnd },
+          end_time: { gt: windowStart },
+        },
+        select: { start_time: true, end_time: true },
+      }),
+    ]);
+
+    // Per weekday, prefer the location-specific schedule, fall back to the global one —
+    // same precedence as the single-date getSlots above.
+    const pickHours = (dow: number) =>
+      (locationId && workingHours.find((w) => w.day_of_week === dow && w.location_id === locationId)) ||
+      workingHours.find((w) => w.day_of_week === dow && w.location_id === null);
+
+    const result: Record<string, string[]> = {};
+    for (let i = 0; i < days; i++) {
+      const d = addDays(startDate, i);
+      const dateStr = format(d, 'yyyy-MM-dd');
+      const wh = pickHours(d.getDay());
+      result[dateStr] = wh
+        ? this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes)
+        : [];
+    }
+    return result;
+  }
+
+  /**
    * Creates a guest booking inside a SERIALIZABLE transaction to prevent double-booking.
    * Accepts one or more serviceIds; total duration is the sum of all service durations.
    * Sends a confirmation email asynchronously (failure is swallowed — doesn't affect the response).

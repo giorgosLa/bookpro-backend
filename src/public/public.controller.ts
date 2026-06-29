@@ -69,6 +69,23 @@ export class PublicController {
     return this.publicService.getSlots(profileId, date, Number(duration), excludeId, locationId);
   }
 
+  @Get('profile/:slug/slots-range')
+  @ApiOperation({ summary: 'Get available slots for N consecutive dates in one call — for the booking grid' })
+  @ApiQuery({ name: 'startDate', example: '2026-06-28' })
+  @ApiQuery({ name: 'days', example: 7, type: Number })
+  @ApiQuery({ name: 'duration', example: 30, type: Number })
+  @ApiQuery({ name: 'locationId', required: false })
+  async getSlotsRange(
+    @Param('slug') slug: string,
+    @Query('startDate') startDate: string,
+    @Query('days') days: number,
+    @Query('duration') duration: number,
+    @Query('locationId') locationId?: string,
+  ) {
+    const profileId = await this.publicService.resolveProfileId(slug);
+    return this.publicService.getSlotsRange(profileId, startDate, Number(days), Number(duration), locationId);
+  }
+
   @Get('profile/:slug/availability-dates')
   @ApiOperation({ summary: 'Get next available dates with first slot — for search results page' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
