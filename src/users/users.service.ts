@@ -28,6 +28,11 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateProfileDto) {
+    // A doctor can accept ΓεΣΥ or ΕΟΠΥΥ — never both. Enforce mutual exclusivity.
+    if (dto.acceptsGessy && dto.acceptsEopyy) {
+      throw new BadRequestException('Ένας γιατρός δεν μπορεί να δέχεται ταυτόχρονα ΓεΣΥ και ΕΟΠΥΥ.');
+    }
+
     if (dto.bookingUrlSlug) {
       const conflict = await this.prisma.user.findFirst({
         where: { booking_url_slug: dto.bookingUrlSlug, NOT: { id } },

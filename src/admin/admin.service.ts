@@ -579,6 +579,9 @@ export class AdminService {
       if (dto.education !== undefined) dpFields.education = dto.education;
       if (dto.acceptsGessy !== undefined) dpFields.accepts_gessy = dto.acceptsGessy;
       if (dto.acceptsEopyy !== undefined) dpFields.accepts_eopyy = dto.acceptsEopyy;
+      // A doctor can accept ΓεΣΥ or ΕΟΠΥΥ — never both. Setting one true forces the other false.
+      if (dto.acceptsGessy === true) dpFields.accepts_eopyy = false;
+      else if (dto.acceptsEopyy === true) dpFields.accepts_gessy = false;
 
       if (Object.keys(dpFields).length > 0) {
         await tx.doctorProfile.update({
