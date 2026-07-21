@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { v4 as uuidv4 } from 'uuid';
 import { invalidateDoctorCaches } from '@/public/cache';
+import { resolveTimezone, wallClockToUtc } from '@/common/time/tz.util';
 import { CreateLocationDto, UpdateLocationDto } from './dto/create-location.dto';
 import {
   AddLocationServiceDto,
@@ -122,19 +123,56 @@ export class LocationsService {
 
   async createBlockedTime(userId: string, locationId: string, dto: CreateLocationBlockedTimeDto) {
     await this.assertOwnership(userId, locationId);
+    if (dto.endTime <= dto.startTime) {
+      throw new BadRequestException('End time must be after start time');
+    }
+
+    const date = new Date(dto.date);
+    const existing = await this.prisma.blocked_time.findMany({
+      where: { location_id: locationId, date },
+      select: { start_time: true, end_time: true },
+    });
+    const toHHmm = (d: Date) => d.toISOString().substring(11, 16);
+    const overlaps = existing.some(
+      (b) => dto.startTime < toHHmm(b.end_time) && toHHmm(b.start_time) < dto.endTime,
+    );
+    if (overlaps) {
+      throw new ConflictException('This time range overlaps an existing blocked time');
+    }
+
     const result = await this.prisma.blocked_time.create({
       data: {
         id: uuidv4(),
         profile_id: userId,
         location_id: locationId,
-        date: new Date(dto.date),
+        date,
         start_time: new Date(`1970-01-01T${dto.startTime}:00Z`),
         end_time: new Date(`1970-01-01T${dto.endTime}:00Z`),
         reason: dto.reason ?? null,
       },
     });
     invalidateDoctorCaches(userId);
-    return result;
+
+    // Blocking never cancels existing bookings — surface how many fall inside the
+    // range so the UI can warn the doctor to handle them manually.
+    const [user, location] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }),
+      this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } }),
+    ]);
+    const tz = resolveTimezone(user?.timezone, location?.timezone);
+    const startUtc = wallClockToUtc(dto.date, dto.startTime, tz);
+    const endUtc = wallClockToUtc(dto.date, dto.endTime, tz);
+    const conflictingAppointments = await this.prisma.appointments.count({
+      where: {
+        profile_id: userId,
+        location_id: locationId,
+        status: { not: 'cancelled' },
+        start_time: { lt: endUtc },
+        end_time: { gt: startUtc },
+      },
+    });
+
+    return { ...result, conflictingAppointments };
   }
 
   async deleteBlockedTime(userId: string, locationId: string, blockedId: string) {
