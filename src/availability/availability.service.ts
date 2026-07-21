@@ -41,8 +41,10 @@ export class AvailabilityService {
 
   /** Returns future global blocked times (no location) ordered by date then start time. */
   getBlockedTimes(userId: string) {
+    const startOfToday = new Date();
+    startOfToday.setUTCHours(0, 0, 0, 0);
     return this.prisma.blocked_time.findMany({
-      where: { profile_id: userId, location_id: null, date: { gte: new Date() } },
+      where: { profile_id: userId, location_id: null, date: { gte: startOfToday } },
       orderBy: [{ date: 'asc' }, { start_time: 'asc' }],
     });
   }

@@ -10,6 +10,13 @@ import {
   CreateLocationBlockedTimeDto,
 } from './dto/location-service.dto';
 
+/** Today at 00:00 UTC — matches how blocked_time.date is stored (UTC-midnight per calendar date). */
+function startOfTodayUtc(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
 @Injectable()
 export class LocationsService {
   constructor(private prisma: PrismaService) {}
@@ -108,7 +115,7 @@ export class LocationsService {
   async getBlockedTimes(userId: string, locationId: string) {
     await this.assertOwnership(userId, locationId);
     return this.prisma.blocked_time.findMany({
-      where: { location_id: locationId, date: { gte: new Date() } },
+      where: { location_id: locationId, date: { gte: startOfTodayUtc() } },
       orderBy: [{ date: 'asc' }, { start_time: 'asc' }],
     });
   }
