@@ -1,28 +1,15 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  BadRequestException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import * as Sentry from '@sentry/nestjs';
-import { MedicalSpecialty } from '@prisma/client';
-import { PrismaService } from '@/database/prisma.service';
-import { EmailService } from '@/email/email.service';
-import { EventsService } from '@/events/events.service';
-import { CreateBookingDto } from './dto/create-booking.dto';
-import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
-import { availCache, AVAIL_TTL, doctorsCache, DOCTORS_TTL, profileCache, PROFILE_TTL } from './cache';
-import {
-  addMinutes,
-  addDays,
-  format,
-  startOfDay,
-  endOfDay,
-  addHours,
-  subHours,
-} from 'date-fns';
-import { v4 as uuidv4 } from 'uuid';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import * as Sentry from "@sentry/nestjs";
+import { MedicalSpecialty } from "@prisma/client";
+import { PrismaService } from "@/database/prisma.service";
+import { EmailService } from "@/email/email.service";
+import { EventsService } from "@/events/events.service";
+import { CreateBookingDto } from "./dto/create-booking.dto";
+import { RescheduleBookingDto } from "./dto/reschedule-booking.dto";
+import { availCache, AVAIL_TTL, doctorsCache, DOCTORS_TTL, profileCache, PROFILE_TTL } from "./cache";
+import { addMinutes, addDays, format, startOfDay, endOfDay, addHours, subHours } from "date-fns";
+import { v4 as uuidv4 } from "uuid";
 import {
   CLINIC_DEFAULT_TZ,
   resolveTimezone,
@@ -30,15 +17,14 @@ import {
   todayStrInTz,
   dateStrInTz,
   dayOfWeekInTz,
-} from '@/common/time/tz.util';
-import { computeDaySlots, timeOfDay } from './slots.helper';
-import { randomBytes } from 'crypto';
+} from "@/common/time/tz.util";
+import { computeDaySlots, timeOfDay, dateOnly } from "./slots.helper";
+import { randomBytes } from "crypto";
 
 function generateRefCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from(randomBytes(6), (b) => chars[b % chars.length]).join('');
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(randomBytes(6), (b) => chars[b % chars.length]).join("");
 }
-
 
 @Injectable()
 export class PublicService {
@@ -50,13 +36,29 @@ export class PublicService {
   ) {}
 
   private static readonly SPECIALTY_LABELS: Record<string, string> = {
-    GENERAL_PRACTITIONER: 'Παθολόγος', CARDIOLOGIST: 'Καρδιολόγος', DERMATOLOGIST: 'Δερματολόγος',
-    ENDOCRINOLOGIST: 'Ενδοκρινολόγος', GASTROENTEROLOGIST: 'Γαστρεντερολόγος', NEUROLOGIST: 'Νευρολόγος',
-    OBSTETRICIAN_GYNECOLOGIST: 'Γυναικολόγος', OPHTHALMOLOGIST: 'Οφθαλμίατρος', ORTHOPEDIC_SURGEON: 'Ορθοπεδικός',
-    OTOLARYNGOLOGIST: 'Ωτορινολαρυγγολόγος', PEDIATRICIAN: 'Παιδίατρος', PSYCHIATRIST: 'Ψυχίατρος',
-    PULMONOLOGIST: 'Πνευμονολόγος', RADIOLOGIST: 'Ακτινολόγος', RHEUMATOLOGIST: 'Ρευματολόγος',
-    SURGEON: 'Χειρουργός', UROLOGIST: 'Ουρολόγος', DENTIST: 'Οδοντίατρος', ORTHODONTIST: 'Ορθοδοντικός',
-    PHYSIOTHERAPIST: 'Φυσιοθεραπευτής', PSYCHOLOGIST: 'Ψυχολόγος', NUTRITIONIST: 'Διαιτολόγος', OTHER: 'Άλλο',
+    GENERAL_PRACTITIONER: "Παθολόγος",
+    CARDIOLOGIST: "Καρδιολόγος",
+    DERMATOLOGIST: "Δερματολόγος",
+    ENDOCRINOLOGIST: "Ενδοκρινολόγος",
+    GASTROENTEROLOGIST: "Γαστρεντερολόγος",
+    NEUROLOGIST: "Νευρολόγος",
+    OBSTETRICIAN_GYNECOLOGIST: "Γυναικολόγος",
+    OPHTHALMOLOGIST: "Οφθαλμίατρος",
+    ORTHOPEDIC_SURGEON: "Ορθοπεδικός",
+    OTOLARYNGOLOGIST: "Ωτορινολαρυγγολόγος",
+    PEDIATRICIAN: "Παιδίατρος",
+    PSYCHIATRIST: "Ψυχίατρος",
+    PULMONOLOGIST: "Πνευμονολόγος",
+    RADIOLOGIST: "Ακτινολόγος",
+    RHEUMATOLOGIST: "Ρευματολόγος",
+    SURGEON: "Χειρουργός",
+    UROLOGIST: "Ουρολόγος",
+    DENTIST: "Οδοντίατρος",
+    ORTHODONTIST: "Ορθοδοντικός",
+    PHYSIOTHERAPIST: "Φυσιοθεραπευτής",
+    PSYCHOLOGIST: "Ψυχολόγος",
+    NUTRITIONIST: "Διαιτολόγος",
+    OTHER: "Άλλο",
   };
 
   async search(q: string) {
@@ -70,13 +72,13 @@ export class PublicService {
 
     const doctors = await this.prisma.user.findMany({
       where: {
-        role: 'DOCTOR',
+        role: "DOCTOR",
         booking_url_slug: { not: null },
         is_suspended: false,
-        doctor_profile: { verification_status: 'APPROVED' },
+        doctor_profile: { verification_status: "APPROVED" },
         OR: [
-          { full_name: { contains: q.trim(), mode: 'insensitive' } },
-          { business_name: { contains: q.trim(), mode: 'insensitive' } },
+          { full_name: { contains: q.trim(), mode: "insensitive" } },
+          { business_name: { contains: q.trim(), mode: "insensitive" } },
         ],
       },
       select: {
@@ -94,25 +96,26 @@ export class PublicService {
       specialties,
       doctors: doctors.map((d) => ({
         id: d.id,
-        name: d.business_name ?? d.full_name ?? '',
+        name: d.business_name ?? d.full_name ?? "",
         slug: d.booking_url_slug,
         avatar: d.avatar_url,
         specialty: d.doctor_profile?.specialty
-          ? (PublicService.SPECIALTY_LABELS[d.doctor_profile.specialty] ?? '')
-          : '',
+          ? (PublicService.SPECIALTY_LABELS[d.doctor_profile.specialty] ?? "")
+          : "",
       })),
     };
   }
 
   /** Returns all registered doctors who have a booking slug. Optionally filters by specialty enum. */
   async getDoctors(specialty?: string, location?: string) {
-    const cacheKey = `${specialty?.trim() || 'all'}:${location?.trim().toLowerCase() || 'all'}`;
+    const cacheKey = `${specialty?.trim() || "all"}:${location?.trim().toLowerCase() || "all"}`;
     const cached = doctorsCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.data as Awaited<ReturnType<typeof this.runDoctorsQuery>>;
 
-    const validSpecialty = specialty && Object.values(MedicalSpecialty).includes(specialty as MedicalSpecialty)
-      ? (specialty as MedicalSpecialty)
-      : undefined;
+    const validSpecialty =
+      specialty && Object.values(MedicalSpecialty).includes(specialty as MedicalSpecialty)
+        ? (specialty as MedicalSpecialty)
+        : undefined;
 
     // Accent-insensitive location filter via unaccent extension
     let locationIds: string[] | undefined;
@@ -126,7 +129,7 @@ export class PublicService {
           unaccent(u.address) ILIKE unaccent(${term})
           OR unaccent(l.address) ILIKE unaccent(${term})
       `;
-      locationIds = rows.map(r => r.id);
+      locationIds = rows.map((r) => r.id);
       if (locationIds.length === 0) return [];
     }
 
@@ -139,11 +142,11 @@ export class PublicService {
   private runDoctorsQuery(validSpecialty?: MedicalSpecialty, locationIds?: string[]) {
     return this.prisma.user.findMany({
       where: {
-        role: 'DOCTOR',
+        role: "DOCTOR",
         booking_url_slug: { not: null },
         is_suspended: false,
         doctor_profile: {
-          verification_status: 'APPROVED',
+          verification_status: "APPROVED",
           ...(validSpecialty ? { specialty: validSpecialty } : {}),
         },
         ...(locationIds ? { id: { in: locationIds } } : {}),
@@ -162,17 +165,17 @@ export class PublicService {
         services: {
           where: { is_active: true },
           select: { id: true, name: true, price: true },
-          orderBy: { duration_minutes: 'asc' },
+          orderBy: { duration_minutes: "asc" },
           take: 3,
         },
         locations: {
           where: { is_active: true },
           select: { id: true, name: true, address: true },
-          orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
+          orderBy: [{ order: "asc" }, { created_at: "asc" }],
           take: 5,
         },
       },
-      orderBy: { created_at: 'asc' },
+      orderBy: { created_at: "asc" },
       take: 100,
     });
   }
@@ -180,11 +183,12 @@ export class PublicService {
   /** Returns a doctor's public profile (with active services and working hours) by booking slug. */
   async getProfile(slug: string) {
     const cached = profileCache.get(slug);
-    if (cached && cached.expiresAt > Date.now()) return cached.data as NonNullable<Awaited<ReturnType<typeof this.runProfileQuery>>>;
+    if (cached && cached.expiresAt > Date.now())
+      return cached.data as NonNullable<Awaited<ReturnType<typeof this.runProfileQuery>>>;
 
     const profile = await this.runProfileQuery(slug);
-    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== "APPROVED") {
+      throw new NotFoundException("Profile not found");
     }
     profileCache.set(slug, { data: profile, expiresAt: Date.now() + PROFILE_TTL });
     return profile;
@@ -206,19 +210,25 @@ export class PublicService {
         buffer_minutes: true,
         is_suspended: true,
         doctor_profile: {
-          select: { specialty: true, latitude: true, longitude: true, accepts_gessy: true, accepts_eopyy: true, verification_status: true, medical_association_number: true, gender: true },
+          select: {
+            specialty: true,
+            latitude: true,
+            longitude: true,
+            accepts_gessy: true,
+            accepts_eopyy: true,
+            verification_status: true,
+            medical_association_number: true,
+            gender: true,
+          },
         },
         services: {
           where: { is_active: true },
           include: { service_category: { select: { id: true, name: true, order: true } } },
-          orderBy: [
-            { service_category: { order: 'asc' } },
-            { created_at: 'asc' },
-          ],
+          orderBy: [{ service_category: { order: "asc" } }, { created_at: "asc" }],
         },
         working_hours: true,
         doctor_photos: {
-          orderBy: { order: 'asc' as const },
+          orderBy: { order: "asc" as const },
           select: { id: true, url: true, order: true },
         },
         locations: {
@@ -235,7 +245,7 @@ export class PublicService {
               select: { service_id: true, price_override: true, duration_override: true },
             },
           },
-          orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
+          orderBy: [{ order: "asc" }, { created_at: "asc" }],
         },
       },
     });
@@ -272,8 +282,8 @@ export class PublicService {
 
     // Query bounds as the clinic-day's absolute instants (not server-local day),
     // so we don't miss appointments near the day's edges across the UTC offset.
-    const dayStart = wallClockToUtc(dateStr, '00:00', timezone);
-    const dayEnd = wallClockToUtc(dateStr, '23:59:59', timezone);
+    const dayStart = wallClockToUtc(dateStr, "00:00", timezone);
+    const dayEnd = wallClockToUtc(dateStr, "23:59:59", timezone);
 
     const [blockedTimes, appointments] = await Promise.all([
       this.prisma.blocked_time.findMany({
@@ -286,7 +296,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: profileId,
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { lt: dayEnd },
           end_time: { gt: dayStart },
           ...(excludeId ? { id: { not: excludeId } } : {}),
@@ -295,7 +305,16 @@ export class PublicService {
       }),
     ]);
 
-    return this.computeSlots(selectedDate, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes);
+    return this.computeSlots(
+      selectedDate,
+      wh,
+      blockedTimes,
+      appointments,
+      durationMinutes,
+      dateStr,
+      timezone,
+      bufferMinutes,
+    );
   }
 
   /**
@@ -323,9 +342,9 @@ export class PublicService {
 
     // Whole-window bounds as absolute instants in the clinic timezone (±24h padding so
     // appointments/blocks near the day edges aren't dropped across the UTC offset).
-    const lastDateStr = format(addDays(startDate, days - 1), 'yyyy-MM-dd');
-    const windowStart = subHours(wallClockToUtc(startDateStr, '00:00', timezone), 24);
-    const windowEnd = addHours(wallClockToUtc(lastDateStr, '23:59:59', timezone), 24);
+    const lastDateStr = format(addDays(startDate, days - 1), "yyyy-MM-dd");
+    const windowStart = subHours(wallClockToUtc(startDateStr, "00:00", timezone), 24);
+    const windowEnd = addHours(wallClockToUtc(lastDateStr, "23:59:59", timezone), 24);
 
     const [workingHours, blockedTimes, appointments] = await Promise.all([
       this.prisma.working_hours.findMany({
@@ -345,7 +364,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: profileId,
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { lt: windowEnd },
           end_time: { gt: windowStart },
         },
@@ -362,7 +381,7 @@ export class PublicService {
     const result: Record<string, string[]> = {};
     for (let i = 0; i < days; i++) {
       const d = addDays(startDate, i);
-      const dateStr = format(d, 'yyyy-MM-dd');
+      const dateStr = format(d, "yyyy-MM-dd");
       const wh = pickHours(d.getDay());
       result[dateStr] = wh
         ? this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes)
@@ -380,9 +399,9 @@ export class PublicService {
     // Core revenue flow — leave a trail so any error captured downstream
     // (booking conflict, email failure, 500) carries the booking context.
     Sentry.addBreadcrumb({
-      category: 'booking',
+      category: "booking",
       message: `Booking attempt for doctor ${dto.profileId} at ${dto.date} ${dto.time}`,
-      level: 'info',
+      level: "info",
       data: { profileId: dto.profileId, locationId: dto.locationId, isGuest: !patientId },
     });
 
@@ -395,24 +414,25 @@ export class PublicService {
         ? this.prisma.locations.findUnique({ where: { id: dto.locationId }, select: { timezone: true } })
         : Promise.resolve(null),
     ]);
-    if (!doctor || doctor.is_suspended || doctor.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new BadRequestException('Doctor is not available for booking');
+    if (!doctor || doctor.is_suspended || doctor.doctor_profile?.verification_status !== "APPROVED") {
+      throw new BadRequestException("Doctor is not available for booking");
     }
 
     const services = await this.prisma.services.findMany({
       where: { id: { in: dto.serviceIds }, profile_id: dto.profileId },
     });
-    if (services.length !== dto.serviceIds.length) throw new BadRequestException('One or more services not found');
+    if (services.length !== dto.serviceIds.length) throw new BadRequestException("One or more services not found");
 
     // Interpret the patient's chosen wall-clock time in the clinic's timezone so
     // the stored instant is correct regardless of the server's timezone.
     const timezone = resolveTimezone(doctor.timezone, bookingLocation?.timezone);
     const totalDuration = services.reduce((sum, s) => sum + s.duration_minutes, 0);
     const startTime = wallClockToUtc(dto.date, dto.time, timezone);
-    if (startTime < new Date()) throw new BadRequestException('Cannot book a slot in the past');
+    if (startTime < new Date()) throw new BadRequestException("Cannot book a slot in the past");
     const endTime = addMinutes(startTime, totalDuration);
 
     await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, timezone, dto.locationId);
+    await this.validateNotBlocked(dto.profileId, startTime, endTime, timezone, dto.locationId);
 
     const createAppointment = async () => {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -422,11 +442,11 @@ export class PublicService {
               const conflict = await tx.appointments.findFirst({
                 where: {
                   profile_id: dto.profileId,
-                  status: { in: ['pending', 'confirmed'] },
+                  status: { in: ["pending", "confirmed"] },
                   AND: [{ start_time: { lt: endTime } }, { end_time: { gt: startTime } }],
                 },
               });
-              if (conflict) throw new ConflictException('This time slot is no longer available');
+              if (conflict) throw new ConflictException("This time slot is no longer available");
 
               return (tx.appointments as any).create({
                 data: {
@@ -441,7 +461,7 @@ export class PublicService {
                   client_timezone: dto.clientTimezone ?? null,
                   start_time: startTime,
                   end_time: endTime,
-                  status: 'pending',
+                  status: "pending",
                   management_token: uuidv4(),
                   notes: dto.notes ?? null,
                   appointment_services: {
@@ -451,22 +471,22 @@ export class PublicService {
                 include: { profiles: true, appointment_services: { include: { service: true } } },
               });
             },
-            { isolationLevel: 'Serializable' },
+            { isolationLevel: "Serializable" },
           );
         } catch (err: any) {
           const isRefNumberCollision =
-            err?.code === 'P2002' &&
-            (err?.meta?.target?.includes('ref_number') ||
-              err?.meta?.driverAdapterError?.cause?.constraint?.fields?.includes('ref_number'));
+            err?.code === "P2002" &&
+            (err?.meta?.target?.includes("ref_number") ||
+              err?.meta?.driverAdapterError?.cause?.constraint?.fields?.includes("ref_number"));
           if (isRefNumberCollision) {
             console.warn(`[ref_number] collision on attempt ${attempt + 1}, retrying...`);
             Sentry.addBreadcrumb({
-              category: 'booking',
+              category: "booking",
               message: `ref_number collision, retry ${attempt + 1}`,
-              level: 'warning',
+              level: "warning",
             });
             if (attempt < 4) continue;
-            throw new BadRequestException('Could not generate unique booking reference, please try again');
+            throw new BadRequestException("Could not generate unique booking reference, please try again");
           }
           throw err;
         }
@@ -474,10 +494,7 @@ export class PublicService {
     };
 
     const [appointment, location] = await Promise.all([
-      Sentry.startSpan(
-        { name: 'booking.createAppointment', op: 'db.transaction' },
-        () => createAppointment(),
-      ),
+      Sentry.startSpan({ name: "booking.createAppointment", op: "db.transaction" }, () => createAppointment()),
       dto.locationId
         ? this.prisma.locations.findUnique({
             where: { id: dto.locationId },
@@ -486,12 +503,12 @@ export class PublicService {
         : Promise.resolve(null),
     ]);
 
-    const serviceNames = services.map((s) => s.name).join(', ');
+    const serviceNames = services.map((s) => s.name).join(", ");
     const doctor_profile = (appointment as any).profiles as any;
 
     // Push real-time notification to the doctor's SSE stream (fire-and-forget)
     this.events.emit(appointment.profile_id, {
-      type: 'new_appointment',
+      type: "new_appointment",
       id: appointment.id,
       profile_id: appointment.profile_id,
       client_name: appointment.client_name,
@@ -506,22 +523,23 @@ export class PublicService {
       appointment_services: (appointment as any).appointment_services,
     });
 
-    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
+    const appUrl = this.config.get<string>("appUrl") ?? "http://localhost:3000";
 
     let mapsUrl: string | undefined;
     if (location) {
-      mapsUrl = location.lat && location.lng
-        ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
-        : location.address
-          ? `https://maps.google.com/?q=${encodeURIComponent(location.address)}`
-          : undefined;
+      mapsUrl =
+        location.lat && location.lng
+          ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
+          : location.address
+            ? `https://maps.google.com/?q=${encodeURIComponent(location.address)}`
+            : undefined;
     }
 
     this.email
       .sendBookingConfirmation({
         to: dto.clientEmail,
         clientName: dto.clientName,
-        businessName: doctor_profile?.business_name ?? doctor_profile?.full_name ?? 'BookPro',
+        businessName: doctor_profile?.business_name ?? doctor_profile?.full_name ?? "BookPro",
         serviceName: serviceNames,
         date: dto.date,
         time: dto.time,
@@ -537,12 +555,12 @@ export class PublicService {
     this.email
       .sendNewAppointmentToDoctor({
         to: doctor_profile?.email,
-        doctorName: doctor_profile?.full_name ?? doctor_profile?.business_name ?? 'Γιατρέ',
+        doctorName: doctor_profile?.full_name ?? doctor_profile?.business_name ?? "Γιατρέ",
         clientName: dto.clientName,
         clientPhone: dto.clientPhone ?? null,
         serviceName: serviceNames,
-        date: format(startTime, 'dd/MM/yyyy'),
-        time: format(startTime, 'HH:mm'),
+        date: format(startTime, "dd/MM/yyyy"),
+        time: format(startTime, "HH:mm"),
         notes: dto.notes ?? null,
         appUrl,
         refNumber: appointment.ref_number,
@@ -550,9 +568,9 @@ export class PublicService {
       .catch(() => null);
 
     Sentry.addBreadcrumb({
-      category: 'booking',
+      category: "booking",
       message: `Booking created ${appointment.ref_number}`,
-      level: 'info',
+      level: "info",
       data: { appointmentId: appointment.id },
     });
 
@@ -577,7 +595,7 @@ export class PublicService {
         },
       },
     });
-    if (!appt) throw new NotFoundException('Booking not found');
+    if (!appt) throw new NotFoundException("Booking not found");
     return appt;
   }
 
@@ -590,26 +608,26 @@ export class PublicService {
         profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true } },
       },
     });
-    if (!appt) throw new NotFoundException('Booking not found');
-    if (appt.status === 'cancelled') throw new BadRequestException('Already cancelled');
+    if (!appt) throw new NotFoundException("Booking not found");
+    if (appt.status === "cancelled") throw new BadRequestException("Already cancelled");
 
     await this.prisma.appointments.update({
       where: { id: appt.id },
-      data: { status: 'cancelled', cancelled_by: 'client', updated_at: new Date() },
+      data: { status: "cancelled", cancelled_by: "client", updated_at: new Date() },
     });
 
     this.events.emit(appt.profile_id, {
-      type: 'appointment_cancelled',
+      type: "appointment_cancelled",
       id: appt.id,
-      status: 'cancelled',
-      cancelled_by: 'client',
+      status: "cancelled",
+      cancelled_by: "client",
     });
 
     const profile = appt.profiles as any;
-    const date = format(appt.start_time, 'dd/MM/yyyy');
-    const time = format(appt.start_time, 'HH:mm');
-    const businessName = profile.full_name ?? profile.business_name ?? 'Ο γιατρός σας';
-    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(', ');
+    const date = format(appt.start_time, "dd/MM/yyyy");
+    const time = format(appt.start_time, "HH:mm");
+    const businessName = profile.full_name ?? profile.business_name ?? "Ο γιατρός σας";
+    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(", ");
 
     this.email
       .sendCancellationNotificationToDoctor({
@@ -623,10 +641,8 @@ export class PublicService {
       })
       .catch(() => null);
 
-    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
-    const bookingUrl = profile.booking_url_slug
-      ? `${appUrl}/book/${profile.booking_url_slug}`
-      : undefined;
+    const appUrl = this.config.get<string>("appUrl") ?? "http://localhost:3000";
+    const bookingUrl = profile.booking_url_slug ? `${appUrl}/book/${profile.booking_url_slug}` : undefined;
 
     this.email
       .sendPatientCancellationConfirmation({
@@ -641,7 +657,7 @@ export class PublicService {
       })
       .catch(() => null);
 
-    return { message: 'Booking cancelled' };
+    return { message: "Booking cancelled" };
   }
 
   /** Reschedules a booking via management token. Checks for conflicts at the new slot before saving. */
@@ -650,11 +666,13 @@ export class PublicService {
       where: { management_token: token },
       include: {
         appointment_services: { include: { service: true } },
-        profiles: { select: { email: true, full_name: true, business_name: true, booking_url_slug: true, timezone: true } },
+        profiles: {
+          select: { email: true, full_name: true, business_name: true, booking_url_slug: true, timezone: true },
+        },
       },
     });
-    if (!appt) throw new NotFoundException('Booking not found');
-    if (appt.status === 'cancelled') throw new BadRequestException('Cannot reschedule a cancelled booking');
+    if (!appt) throw new NotFoundException("Booking not found");
+    if (appt.status === "cancelled") throw new BadRequestException("Cannot reschedule a cancelled booking");
 
     const location = appt.location_id
       ? await this.prisma.locations.findUnique({ where: { id: appt.location_id }, select: { timezone: true } })
@@ -666,43 +684,44 @@ export class PublicService {
       0,
     );
     const newStart = wallClockToUtc(dto.date, dto.time, timezone);
-    if (newStart < new Date()) throw new BadRequestException('Cannot reschedule to a slot in the past');
+    if (newStart < new Date()) throw new BadRequestException("Cannot reschedule to a slot in the past");
     const newEnd = addMinutes(newStart, totalDuration || 30);
 
     await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, timezone, appt.location_id ?? undefined);
+    await this.validateNotBlocked(appt.profile_id, newStart, newEnd, timezone, appt.location_id ?? undefined);
 
     await this.prisma.$transaction(
       async (tx) => {
         const conflict = await tx.appointments.findFirst({
           where: {
             profile_id: appt.profile_id,
-            status: { in: ['pending', 'confirmed'] },
+            status: { in: ["pending", "confirmed"] },
             id: { not: appt.id },
             AND: [{ start_time: { lt: newEnd } }, { end_time: { gt: newStart } }],
           },
         });
-        if (conflict) throw new ConflictException('This time slot is not available');
+        if (conflict) throw new ConflictException("This time slot is not available");
 
         await tx.appointments.update({
           where: { id: appt.id },
-          data: { start_time: newStart, end_time: newEnd, status: 'pending', updated_at: new Date() },
+          data: { start_time: newStart, end_time: newEnd, status: "pending", updated_at: new Date() },
         });
       },
-      { isolationLevel: 'Serializable' },
+      { isolationLevel: "Serializable" },
     );
 
     this.events.emit(appt.profile_id, {
-      type: 'appointment_rescheduled',
+      type: "appointment_rescheduled",
       id: appt.id,
       start_time: newStart,
       end_time: newEnd,
-      status: 'pending',
+      status: "pending",
     });
 
     const doctor = (appt as any).profiles as { email: string; full_name: string | null; business_name: string | null };
-    const businessName = doctor.full_name ?? doctor.business_name ?? 'Ο γιατρός σας';
-    const appUrl = this.config.get<string>('appUrl') ?? 'http://localhost:3000';
-    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(', ');
+    const businessName = doctor.full_name ?? doctor.business_name ?? "Ο γιατρός σας";
+    const appUrl = this.config.get<string>("appUrl") ?? "http://localhost:3000";
+    const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(", ");
 
     this.email
       .sendRescheduleNotificationToDoctor({
@@ -710,10 +729,10 @@ export class PublicService {
         doctorName: businessName,
         clientName: appt.client_name,
         serviceName: serviceNames,
-        oldDate: format(appt.start_time, 'dd/MM/yyyy'),
-        oldTime: format(appt.start_time, 'HH:mm'),
-        newDate: format(newStart, 'dd/MM/yyyy'),
-        newTime: format(newStart, 'HH:mm'),
+        oldDate: format(appt.start_time, "dd/MM/yyyy"),
+        oldTime: format(appt.start_time, "HH:mm"),
+        newDate: format(newStart, "dd/MM/yyyy"),
+        newTime: format(newStart, "HH:mm"),
         refNumber: appt.ref_number,
       })
       .catch(() => null);
@@ -724,15 +743,15 @@ export class PublicService {
         clientName: appt.client_name,
         businessName,
         serviceName: serviceNames,
-        newDate: format(newStart, 'dd/MM/yyyy'),
-        newTime: format(newStart, 'HH:mm'),
+        newDate: format(newStart, "dd/MM/yyyy"),
+        newTime: format(newStart, "HH:mm"),
         managementToken: appt.management_token,
         appUrl,
         refNumber: appt.ref_number,
       })
       .catch(() => null);
 
-    return { message: 'Booking rescheduled' };
+    return { message: "Booking rescheduled" };
   }
 
   /**
@@ -766,7 +785,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: profileId,
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { gte: searchStart, lt: searchEnd },
         },
         select: { start_time: true, end_time: true },
@@ -784,7 +803,16 @@ export class PublicService {
     const getSlotsForDate = (d: Date): string[] => {
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
       if (!wh) return [];
-      return this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, format(d, 'yyyy-MM-dd'), timezone, bufferMinutes);
+      return this.computeSlots(
+        d,
+        wh,
+        blockedTimes,
+        appointments,
+        durationMinutes,
+        format(d, "yyyy-MM-dd"),
+        timezone,
+        bufferMinutes,
+      );
     };
 
     const nextDates: string[] = [];
@@ -796,7 +824,7 @@ export class PublicService {
       const d = addDays(baseDate, offset++);
       const s = getSlotsForDate(d);
       if (s.length > 0) {
-        const key = format(d, 'yyyy-MM-dd');
+        const key = format(d, "yyyy-MM-dd");
         nextDates.push(key);
         slots[key] = s;
       }
@@ -804,10 +832,10 @@ export class PublicService {
     offset = 1;
     while (prevDates.length < REQUIRED && offset <= MAX) {
       const d = addDays(baseDate, -offset++);
-      if (format(d, 'yyyy-MM-dd') < todayStr) break;
+      if (format(d, "yyyy-MM-dd") < todayStr) break;
       const s = getSlotsForDate(d);
       if (s.length > 0) {
-        const key = format(d, 'yyyy-MM-dd');
+        const key = format(d, "yyyy-MM-dd");
         prevDates.push(key);
         slots[key] = s;
       }
@@ -866,15 +894,48 @@ export class PublicService {
         where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
       });
     }
-    if (!wh) throw new BadRequestException('Doctor does not work on this day');
+    if (!wh) throw new BadRequestException("Doctor does not work on this day");
 
     // Build the day's open/close as absolute instants in the clinic timezone.
     const open = wallClockToUtc(dateStr, timeOfDay(wh.start_time), timezone);
     const close = wallClockToUtc(dateStr, timeOfDay(wh.end_time), timezone);
 
     if (startTime < open || endTime > close) {
-      throw new BadRequestException('Requested time is outside working hours');
+      throw new BadRequestException("Requested time is outside working hours");
     }
+  }
+
+  /**
+   * Throws if startTime–endTime overlaps a blocked time slot. Blocked rows are wall-clock
+   * (date + HH:mm), so they're converted to absolute instants in the clinic tz before
+   * comparing against the booking's UTC instants. Considers the location's blocks plus
+   * the doctor's global (location_id: null) blocks — mirrors the slots computation.
+   */
+  private async validateNotBlocked(
+    profileId: string,
+    startTime: Date,
+    endTime: Date,
+    timezone: string,
+    locationId?: string,
+  ): Promise<void> {
+    const blocked = await this.prisma.blocked_time.findMany({
+      where: {
+        profile_id: profileId,
+        // ±24h padding so blocks near the day edges aren't missed across the UTC offset.
+        date: { gte: subHours(startTime, 24), lte: addHours(endTime, 24) },
+        OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+      },
+    });
+
+    const s = startTime.getTime();
+    const e = endTime.getTime();
+    const overlaps = blocked.some((b) => {
+      const d = dateOnly(b.date);
+      const bStart = wallClockToUtc(d, timeOfDay(b.start_time), timezone).getTime();
+      const bEnd = wallClockToUtc(d, timeOfDay(b.end_time), timezone).getTime();
+      return s < bEnd && bStart < e;
+    });
+    if (overlaps) throw new ConflictException("This time slot is no longer available");
   }
 
   /**
@@ -886,17 +947,17 @@ export class PublicService {
     const [shortestService] = await this.prisma.services.findMany({
       where: { profile_id: profileId, is_active: true },
       select: { duration_minutes: true },
-      orderBy: { duration_minutes: 'asc' },
+      orderBy: { duration_minutes: "asc" },
       take: 1,
     });
     const duration = shortestService?.duration_minutes ?? 30;
 
-    const baseDateStr = format(new Date(), 'yyyy-MM-dd');
+    const baseDateStr = format(new Date(), "yyyy-MM-dd");
     const { nextDates, slots } = await this.findNearestDates(profileId, baseDateStr, duration);
 
     const result: { date: string; time: string }[] = [];
     for (const date of nextDates) {
-      for (const time of (slots[date] ?? [])) {
+      for (const time of slots[date] ?? []) {
         result.push({ date, time });
         if (result.length >= limit) return result;
       }
@@ -909,7 +970,11 @@ export class PublicService {
    * Used by the search results page to show the doctolib-style date grid.
    * When locationId is provided, only shows availability for that specific location.
    */
-  async getAvailabilityDates(slug: string, limit: number = 6, locationId?: string): Promise<{ date: string; firstSlot: string }[]> {
+  async getAvailabilityDates(
+    slug: string,
+    limit: number = 6,
+    locationId?: string,
+  ): Promise<{ date: string; firstSlot: string }[]> {
     // Stage 1: resolve the slug AND fetch timezone/buffer in a single round-trip.
     // (Avoids resolveProfileId's separate query + findNearestDates' own user lookup.)
     const profile = await this.prisma.user.findUnique({
@@ -922,14 +987,14 @@ export class PublicService {
         doctor_profile: { select: { verification_status: true } },
       },
     });
-    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== "APPROVED") {
+      throw new NotFoundException("Profile not found");
     }
     const profileId = profile.id;
 
-    const cacheKey = `${profileId}:${limit}:${locationId ?? 'all'}`
-    const cached = availCache.get(cacheKey)
-    if (cached && cached.expiresAt > Date.now()) return cached.data
+    const cacheKey = `${profileId}:${limit}:${locationId ?? "all"}`;
+    const cached = availCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
 
     // Window: forward-only (this endpoint never needs past dates), ±12h padding so
     // we don't drop appointments/blocks near the day edges across the UTC offset.
@@ -943,7 +1008,7 @@ export class PublicService {
       this.prisma.services.findFirst({
         where: { profile_id: profileId, is_active: true },
         select: { duration_minutes: true },
-        orderBy: { duration_minutes: 'asc' },
+        orderBy: { duration_minutes: "asc" },
       }),
       this.prisma.working_hours.findMany({
         where: {
@@ -962,7 +1027,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: profileId,
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { gte: searchStart, lt: searchEnd },
         },
         select: { start_time: true, end_time: true },
@@ -982,7 +1047,7 @@ export class PublicService {
       const d = addDays(today, offset);
       const wh = workingHours.find((w) => w.day_of_week === d.getDay());
       if (!wh) continue;
-      const dateStr = format(d, 'yyyy-MM-dd');
+      const dateStr = format(d, "yyyy-MM-dd");
       const slots = this.computeSlots(d, wh, blockedTimes, appointments, duration, dateStr, timezone, bufferMinutes);
       if (slots.length > 0) result.push({ date: dateStr, firstSlot: slots[0] });
     }
@@ -1012,8 +1077,8 @@ export class PublicService {
         doctor_profile: { select: { verification_status: true } },
       },
     });
-    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== "APPROVED") {
+      throw new NotFoundException("Profile not found");
     }
     const profileId = profile.id;
 
@@ -1027,7 +1092,7 @@ export class PublicService {
       this.prisma.services.findFirst({
         where: { profile_id: profileId, is_active: true },
         select: { duration_minutes: true },
-        orderBy: { duration_minutes: 'asc' },
+        orderBy: { duration_minutes: "asc" },
       }),
       this.prisma.working_hours.findMany({
         where: { profile_id: profileId, is_enabled: true },
@@ -1038,7 +1103,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: profileId,
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { gte: searchStart, lt: searchEnd },
         },
         select: { start_time: true, end_time: true },
@@ -1073,7 +1138,7 @@ export class PublicService {
         const d = addDays(today, offset);
         const wh = hours.find((w) => w.day_of_week === d.getDay());
         if (!wh) continue;
-        const dateStr = format(d, 'yyyy-MM-dd');
+        const dateStr = format(d, "yyyy-MM-dd");
         const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
         if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
       }
@@ -1102,7 +1167,7 @@ export class PublicService {
       where: {
         booking_url_slug: { in: slugs },
         is_suspended: false,
-        doctor_profile: { verification_status: 'APPROVED' },
+        doctor_profile: { verification_status: "APPROVED" },
       },
       select: { id: true, booking_url_slug: true, timezone: true, buffer_minutes: true },
     });
@@ -1119,7 +1184,7 @@ export class PublicService {
       this.prisma.services.findMany({
         where: { profile_id: { in: profileIds }, is_active: true },
         select: { profile_id: true, duration_minutes: true },
-        orderBy: { duration_minutes: 'asc' },
+        orderBy: { duration_minutes: "asc" },
       }),
       this.prisma.working_hours.findMany({
         where: { profile_id: { in: profileIds }, is_enabled: true },
@@ -1130,7 +1195,7 @@ export class PublicService {
       this.prisma.appointments.findMany({
         where: {
           profile_id: { in: profileIds },
-          status: { not: 'cancelled' },
+          status: { not: "cancelled" },
           start_time: { gte: searchStart, lt: searchEnd },
         },
         select: { profile_id: true, start_time: true, end_time: true },
@@ -1184,7 +1249,7 @@ export class PublicService {
         const d = addDays(today, offset++);
         const wh = hours.find((h) => h.day_of_week === d.getDay());
         if (!wh) continue;
-        const dateStr = format(d, 'yyyy-MM-dd');
+        const dateStr = format(d, "yyyy-MM-dd");
         const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
         if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
       }
@@ -1201,16 +1266,15 @@ export class PublicService {
       where: { booking_url_slug: slug },
       select: { id: true, is_suspended: true, doctor_profile: { select: { verification_status: true } } },
     });
-    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== 'APPROVED') {
-      throw new NotFoundException('Profile not found');
+    if (!profile || profile.is_suspended || profile.doctor_profile?.verification_status !== "APPROVED") {
+      throw new NotFoundException("Profile not found");
     }
     return profile.id;
   }
 
   /** Parses a YYYY-MM-DD string as a local Date without timezone offset issues. */
   private parseDate(dateStr: string): Date {
-    const [y, m, d] = dateStr.split('-').map(Number);
+    const [y, m, d] = dateStr.split("-").map(Number);
     return new Date(y, m - 1, d);
   }
-
 }
