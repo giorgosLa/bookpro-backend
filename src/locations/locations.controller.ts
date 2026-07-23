@@ -8,6 +8,7 @@ import {
   UpdateLocationServiceDto,
   UpdateLocationScheduleDto,
   CreateLocationBlockedTimeDto,
+  UpdateLocationBlockedTimeDto,
 } from './dto/location-service.dto';
 
 @ApiTags('locations')
@@ -73,6 +74,16 @@ export class LocationsController {
     @Body() dto: CreateLocationBlockedTimeDto,
   ) {
     return this.locationsService.createBlockedTime(user.id, id, dto);
+  }
+
+  @Patch(':id/blocked/:blockedId')
+  updateBlockedTime(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Param('blockedId') blockedId: string,
+    @Body() dto: UpdateLocationBlockedTimeDto,
+  ) {
+    return this.locationsService.updateBlockedTime(user.id, id, blockedId, dto);
   }
 
   @Delete(':id/blocked/:blockedId')

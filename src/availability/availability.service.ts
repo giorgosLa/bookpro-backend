@@ -56,17 +56,14 @@ export class AvailabilityService {
       throw new BadRequestException('End time must be after start time');
     }
 
+    // At most ONE global blocked time per date — changing it is an edit, not a second block.
     const date = new Date(dto.date);
-    const existing = await this.prisma.blocked_time.findMany({
+    const existing = await this.prisma.blocked_time.findFirst({
       where: { profile_id: userId, location_id: null, date },
-      select: { start_time: true, end_time: true },
+      select: { id: true },
     });
-    const toHHmm = (d: Date) => d.toISOString().substring(11, 16);
-    const overlaps = existing.some(
-      (b) => dto.startTime < toHHmm(b.end_time) && toHHmm(b.start_time) < dto.endTime,
-    );
-    if (overlaps) {
-      throw new ConflictException('This time range overlaps an existing blocked time');
+    if (existing) {
+      throw new ConflictException('This day already has a blocked time — edit it instead');
     }
 
     const result = await this.prisma.blocked_time.create({

@@ -9,6 +9,7 @@ import {
   UpdateLocationServiceDto,
   UpdateLocationScheduleDto,
   CreateLocationBlockedTimeDto,
+  UpdateLocationBlockedTimeDto,
 } from './dto/location-service.dto';
 
 /** Today at 00:00 UTC — matches how blocked_time.date is stored (UTC-midnight per calendar date). */
@@ -121,24 +122,62 @@ export class LocationsService {
     });
   }
 
-  async createBlockedTime(userId: string, locationId: string, dto: CreateLocationBlockedTimeDto) {
-    await this.assertOwnership(userId, locationId);
-    if (dto.endTime <= dto.startTime) {
+  /**
+   * A location may hold at most ONE blocked time per date — changing it is an edit,
+   * never a second block. `excludeId` skips the row being edited.
+   */
+  private async assertValidBlockedRange(
+    locationId: string,
+    date: Date,
+    startTime: string,
+    endTime: string,
+    excludeId?: string,
+  ) {
+    if (endTime <= startTime) {
       throw new BadRequestException('End time must be after start time');
     }
+    const existing = await this.prisma.blocked_time.findFirst({
+      where: { location_id: locationId, date, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException('This day already has a blocked time — edit it instead');
+    }
+  }
+
+  /**
+   * Blocking never cancels existing bookings — count how many fall inside the range
+   * so the UI can warn the doctor to handle them manually. Wall-clock range is
+   * converted to absolute instants in the clinic timezone before comparing.
+   */
+  private async countConflictingAppointments(
+    userId: string,
+    locationId: string,
+    dateStr: string,
+    startTime: string,
+    endTime: string,
+  ) {
+    const [user, location] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }),
+      this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } }),
+    ]);
+    const tz = resolveTimezone(user?.timezone, location?.timezone);
+    return this.prisma.appointments.count({
+      where: {
+        profile_id: userId,
+        location_id: locationId,
+        status: { not: 'cancelled' },
+        start_time: { lt: wallClockToUtc(dateStr, endTime, tz) },
+        end_time: { gt: wallClockToUtc(dateStr, startTime, tz) },
+      },
+    });
+  }
+
+  async createBlockedTime(userId: string, locationId: string, dto: CreateLocationBlockedTimeDto) {
+    await this.assertOwnership(userId, locationId);
 
     const date = new Date(dto.date);
-    const existing = await this.prisma.blocked_time.findMany({
-      where: { location_id: locationId, date },
-      select: { start_time: true, end_time: true },
-    });
-    const toHHmm = (d: Date) => d.toISOString().substring(11, 16);
-    const overlaps = existing.some(
-      (b) => dto.startTime < toHHmm(b.end_time) && toHHmm(b.start_time) < dto.endTime,
-    );
-    if (overlaps) {
-      throw new ConflictException('This time range overlaps an existing blocked time');
-    }
+    await this.assertValidBlockedRange(locationId, date, dto.startTime, dto.endTime);
 
     const result = await this.prisma.blocked_time.create({
       data: {
@@ -153,24 +192,54 @@ export class LocationsService {
     });
     invalidateDoctorCaches(userId);
 
-    // Blocking never cancels existing bookings — surface how many fall inside the
-    // range so the UI can warn the doctor to handle them manually.
-    const [user, location] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }),
-      this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } }),
-    ]);
-    const tz = resolveTimezone(user?.timezone, location?.timezone);
-    const startUtc = wallClockToUtc(dto.date, dto.startTime, tz);
-    const endUtc = wallClockToUtc(dto.date, dto.endTime, tz);
-    const conflictingAppointments = await this.prisma.appointments.count({
-      where: {
-        profile_id: userId,
-        location_id: locationId,
-        status: { not: 'cancelled' },
-        start_time: { lt: endUtc },
-        end_time: { gt: startUtc },
+    const conflictingAppointments = await this.countConflictingAppointments(
+      userId,
+      locationId,
+      dto.date,
+      dto.startTime,
+      dto.endTime,
+    );
+
+    return { ...result, conflictingAppointments };
+  }
+
+  /**
+   * The only way to change a day's blocked hours (a date holds at most one block).
+   * Sets the range exactly as given — so it can also shrink a block — without ever
+   * unblocking the slot in between.
+   */
+  async updateBlockedTime(
+    userId: string,
+    locationId: string,
+    blockedId: string,
+    dto: UpdateLocationBlockedTimeDto,
+  ) {
+    await this.assertOwnership(userId, locationId);
+
+    const existing = await this.prisma.blocked_time.findFirst({
+      where: { id: blockedId, location_id: locationId, profile_id: userId },
+    });
+    if (!existing) throw new NotFoundException('Blocked time not found');
+
+    await this.assertValidBlockedRange(locationId, existing.date, dto.startTime, dto.endTime, blockedId);
+
+    const result = await this.prisma.blocked_time.update({
+      where: { id: blockedId },
+      data: {
+        start_time: new Date(`1970-01-01T${dto.startTime}:00Z`),
+        end_time: new Date(`1970-01-01T${dto.endTime}:00Z`),
+        ...(dto.reason !== undefined ? { reason: dto.reason ?? null } : {}),
       },
     });
+    invalidateDoctorCaches(userId);
+
+    const conflictingAppointments = await this.countConflictingAppointments(
+      userId,
+      locationId,
+      existing.date.toISOString().substring(0, 10),
+      dto.startTime,
+      dto.endTime,
+    );
 
     return { ...result, conflictingAppointments };
   }

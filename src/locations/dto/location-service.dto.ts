@@ -88,3 +88,22 @@ export class CreateLocationBlockedTimeDto {
   @IsString()
   reason?: string;
 }
+
+/** Edits an existing blocked time's hours in place. The date is intentionally immutable —
+ *  moving a block to another day is a delete + create, not an edit. */
+export class UpdateLocationBlockedTimeDto {
+  @ApiProperty({ example: '11:00' })
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'startTime must be HH:MM' })
+  startTime: string;
+
+  @ApiProperty({ example: '15:00' })
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'endTime must be HH:MM' })
+  endTime: string;
+
+  @ApiPropertyOptional({ example: 'Σεμινάριο' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
