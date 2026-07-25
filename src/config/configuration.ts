@@ -28,6 +28,12 @@ export default () => ({
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
 
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI,
+  },
+
   redis: {
     // When set, SSE events are fanned out across instances via Redis Pub/Sub.
     // When unset (local dev / single instance), the service falls back to

@@ -30,6 +30,14 @@ export class AuthController {
   }
 
   @Public()
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login with a Google ID token (existing users only)' })
+  googleLogin(@Body('idToken') idToken: string) {
+    return this.authService.googleLogin(idToken);
+  }
+
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token' })

@@ -3,10 +3,13 @@ import {
   ConflictException,
   UnauthorizedException,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { OAuth2Client } from 'google-auth-library';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { PrismaService } from '@/database/prisma.service';
@@ -39,6 +42,59 @@ export class AuthService {
     if (user.is_suspended) throw new UnauthorizedException('Account suspended');
 
     if (!user.emailVerified) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
+
+    return this.issueTokens(user.id, user.email, user.role);
+  }
+
+  /**
+   * Signs in an EXISTING user via a Google ID token — no account is created here.
+   * Verifies the token's signature and audience against our client ID, requires a
+   * Google-verified email, then matches it (case-insensitively) to a registered user.
+   * A matching but never-OTP-verified user is auto-verified, since Google already
+   * proved ownership of the email.
+   *
+   * Status codes are chosen so the frontend surfaces the error instead of the
+   * api-client's global 401 → refresh → redirect interceptor kicking in:
+   *   404 NO_ACCOUNT   — email has no BookPro account (prompt to sign up)
+   *   403 suspended    — account exists but is suspended
+   *   400 bad token    — token invalid or email unverified by Google
+   */
+  async googleLogin(idToken: string) {
+    if (!idToken) throw new BadRequestException('Missing Google token');
+
+    const clientId = this.config.get<string>('google.clientId');
+    if (!clientId) {
+      this.logger.error('[google-login] GOOGLE_CLIENT_ID not configured');
+      throw new BadRequestException('Google login not configured');
+    }
+
+    let payload: { email?: string; email_verified?: boolean } | undefined;
+    try {
+      const client = new OAuth2Client(clientId);
+      const ticket = await client.verifyIdToken({ idToken, audience: clientId });
+      payload = ticket.getPayload();
+    } catch {
+      throw new BadRequestException('Invalid Google token');
+    }
+
+    if (!payload?.email || payload.email_verified !== true) {
+      throw new BadRequestException('Google email not verified');
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { email: { equals: payload.email, mode: 'insensitive' } },
+      select: { id: true, email: true, role: true, is_suspended: true, emailVerified: true },
+    });
+
+    if (!user) throw new NotFoundException('NO_ACCOUNT');
+    if (user.is_suspended) throw new ForbiddenException('Account suspended');
+
+    if (!user.emailVerified) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: new Date() },
+      });
+    }
 
     return this.issueTokens(user.id, user.email, user.role);
   }
