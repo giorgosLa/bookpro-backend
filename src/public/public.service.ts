@@ -894,14 +894,13 @@ export class PublicService {
         where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
       });
     }
-    if (!wh) throw new BadRequestException("Doctor does not work on this day");
+    if (!wh) throw new ConflictException("This time slot is no longer available");
 
-    // Build the day's open/close as absolute instants in the clinic timezone.
     const open = wallClockToUtc(dateStr, timeOfDay(wh.start_time), timezone);
     const close = wallClockToUtc(dateStr, timeOfDay(wh.end_time), timezone);
 
     if (startTime < open || endTime > close) {
-      throw new BadRequestException("Requested time is outside working hours");
+      throw new ConflictException("This time slot is no longer available");
     }
   }
 
