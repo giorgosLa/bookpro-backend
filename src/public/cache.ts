@@ -17,6 +17,14 @@ export const profileCache = new Map<string, Cached<unknown>>();
 export const PROFILE_TTL = 60 * 1000; // 60 seconds
 
 /**
+ * Google Calendar busy intervals per `${profileId}:${yyyy-mm-dd}` (or range key).
+ * Short TTL keeps availability close to real-time while a search page that renders
+ * many doctors doesn't hammer the Google FreeBusy API on every card.
+ */
+export const gcalBusyCache = new Map<string, Cached<{ start: number; end: number }[]>>();
+export const GCAL_BUSY_TTL = 60 * 1000; // 60 seconds
+
+/**
  * Clears every public cache affected by a doctor editing their own data
  * (services, locations, working hours, profile fields, photos, avatar).
  * Call after any such write so the public pages reflect the change immediately

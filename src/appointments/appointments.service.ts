@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '@/database/prisma.service';
 import { EmailService } from '@/email/email.service';
 import { ConfigService } from '@nestjs/config';
+import { GoogleCalendarService } from '@/calendar/google-calendar.service';
 import { UpdateStatusDto, AppointmentStatus } from './dto/update-status.dto';
 import { subDays, format } from 'date-fns';
 
@@ -11,6 +12,7 @@ export class AppointmentsService {
     private prisma: PrismaService,
     private email: EmailService,
     private config: ConfigService,
+    private googleCalendar: GoogleCalendarService,
   ) {}
 
   async findAll(userId: string) {
@@ -122,6 +124,13 @@ export class AppointmentsService {
     }
 
     if (dto.status === AppointmentStatus.CANCELLED) {
+      // Remove the mirrored Google Calendar event (fire-and-forget).
+      if ((appt as any).google_event_id) {
+        void this.googleCalendar
+          .deleteEvent(appt.profile_id, (appt as any).google_event_id)
+          .catch(() => null);
+      }
+
       this.email.sendCancellationNotificationToPatient({
         to: appt.client_email,
         clientName: appt.client_name,

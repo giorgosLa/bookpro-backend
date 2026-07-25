@@ -5,9 +5,10 @@ import { MedicalSpecialty } from "@prisma/client";
 import { PrismaService } from "@/database/prisma.service";
 import { EmailService } from "@/email/email.service";
 import { EventsService } from "@/events/events.service";
+import { GoogleCalendarService } from "@/calendar/google-calendar.service";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { RescheduleBookingDto } from "./dto/reschedule-booking.dto";
-import { availCache, AVAIL_TTL, doctorsCache, DOCTORS_TTL, profileCache, PROFILE_TTL } from "./cache";
+import { availCache, AVAIL_TTL, doctorsCache, DOCTORS_TTL, profileCache, PROFILE_TTL, gcalBusyCache, GCAL_BUSY_TTL } from "./cache";
 import { addMinutes, addDays, format, startOfDay, endOfDay, addHours, subHours } from "date-fns";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -33,7 +34,88 @@ export class PublicService {
     private email: EmailService,
     private config: ConfigService,
     private events: EventsService,
+    private googleCalendar: GoogleCalendarService,
   ) {}
+
+  /** Builds the Google Calendar event payload for an appointment (direction BookPro→Google). */
+  private buildEventInput(params: {
+    clientName: string;
+    serviceNames: string;
+    refNumber: string;
+    clientPhone?: string | null;
+    notes?: string | null;
+    locationName?: string | null;
+    locationAddress?: string | null;
+    start: Date;
+    end: Date;
+    timeZone: string;
+  }) {
+    const descLines = [
+      `Υπηρεσία: ${params.serviceNames}`,
+      `Πελάτης: ${params.clientName}`,
+      params.clientPhone ? `Τηλέφωνο: ${params.clientPhone}` : null,
+      `Κωδικός: ${params.refNumber}`,
+      params.notes ? `Σημειώσεις: ${params.notes}` : null,
+      '',
+      'Κλείστηκε μέσω BookPro',
+    ].filter(Boolean);
+    return {
+      summary: `${params.serviceNames} — ${params.clientName}`,
+      description: descLines.join('\n'),
+      start: params.start,
+      end: params.end,
+      timeZone: params.timeZone,
+      location: params.locationName
+        ? [params.locationName, params.locationAddress].filter(Boolean).join(', ')
+        : params.locationAddress ?? undefined,
+    };
+  }
+
+  /**
+   * Google Calendar busy intervals for a doctor within [windowStart, windowEnd],
+   * shaped as pseudo-appointments so they slot straight into computeDaySlots'
+   * `appointments` list (direction Google→BookPro). On-demand FreeBusy query with a
+   * short in-memory cache; fails open to [] so a Google problem never hides slots.
+   *
+   * Pass `enabled=false` (known from an already-loaded profile) to skip entirely and
+   * avoid any work for the common not-connected case.
+   */
+  private async fetchGoogleBusy(
+    profileId: string,
+    windowStart: Date,
+    windowEnd: Date,
+    enabled?: boolean,
+  ): Promise<{ start_time: Date; end_time: Date }[]> {
+    if (enabled === false) return [];
+
+    const key = `${profileId}:${windowStart.getTime()}:${windowEnd.getTime()}`;
+    const now = Date.now();
+    const cached = gcalBusyCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.data.map((b) => ({ start_time: new Date(b.start), end_time: new Date(b.end) }));
+    }
+
+    const busy = await this.googleCalendar.freeBusy(profileId, windowStart, windowEnd);
+    gcalBusyCache.set(key, {
+      data: busy.map((b) => ({ start: b.start.getTime(), end: b.end.getTime() })),
+      expiresAt: now + GCAL_BUSY_TTL,
+    });
+    return busy.map((b) => ({ start_time: b.start, end_time: b.end }));
+  }
+
+  /**
+   * Authoritative guard: rejects a booking/reschedule that overlaps a Google Calendar
+   * busy block. The slot UI already hides these, but a direct API call could target one,
+   * so the write path must re-check. Fails open (allows the booking) if Google errors.
+   */
+  private async validateNotGoogleBusy(profileId: string, start: Date, end: Date, enabled?: boolean) {
+    if (enabled === false) return;
+    const busy = await this.fetchGoogleBusy(profileId, subHours(start, 1), addHours(end, 1), enabled);
+    const clash = busy.some(
+      (b) => b.start_time.getTime() < end.getTime() && b.end_time.getTime() > start.getTime(),
+    );
+    if (clash) throw new ConflictException("This time slot is no longer available");
+  }
 
   private static readonly SPECIALTY_LABELS: Record<string, string> = {
     GENERAL_PRACTITIONER: "Παθολόγος",
@@ -272,7 +354,10 @@ export class PublicService {
     if (!wh) return [];
 
     const [profile, location] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
+      this.prisma.user.findUnique({
+        where: { id: profileId },
+        select: { timezone: true, buffer_minutes: true, google_calendar_enabled: true },
+      }),
       locationId
         ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
         : Promise.resolve(null),
@@ -285,7 +370,7 @@ export class PublicService {
     const dayStart = wallClockToUtc(dateStr, "00:00", timezone);
     const dayEnd = wallClockToUtc(dateStr, "23:59:59", timezone);
 
-    const [blockedTimes, appointments] = await Promise.all([
+    const [blockedTimes, appointments, googleBusy] = await Promise.all([
       this.prisma.blocked_time.findMany({
         where: {
           profile_id: profileId,
@@ -303,13 +388,14 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
+      this.fetchGoogleBusy(profileId, dayStart, dayEnd, profile?.google_calendar_enabled ?? false),
     ]);
 
     return this.computeSlots(
       selectedDate,
       wh,
       blockedTimes,
-      appointments,
+      [...appointments, ...googleBusy],
       durationMinutes,
       dateStr,
       timezone,
@@ -332,7 +418,10 @@ export class PublicService {
     const startDate = this.parseDate(startDateStr);
 
     const [profile, location] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: profileId }, select: { timezone: true, buffer_minutes: true } }),
+      this.prisma.user.findUnique({
+        where: { id: profileId },
+        select: { timezone: true, buffer_minutes: true, google_calendar_enabled: true },
+      }),
       locationId
         ? this.prisma.locations.findUnique({ where: { id: locationId }, select: { timezone: true } })
         : Promise.resolve(null),
@@ -346,7 +435,7 @@ export class PublicService {
     const windowStart = subHours(wallClockToUtc(startDateStr, "00:00", timezone), 24);
     const windowEnd = addHours(wallClockToUtc(lastDateStr, "23:59:59", timezone), 24);
 
-    const [workingHours, blockedTimes, appointments] = await Promise.all([
+    const [workingHours, blockedTimes, appointmentsRaw, googleBusy] = await Promise.all([
       this.prisma.working_hours.findMany({
         where: {
           profile_id: profileId,
@@ -370,7 +459,10 @@ export class PublicService {
         },
         select: { start_time: true, end_time: true },
       }),
+      this.fetchGoogleBusy(profileId, windowStart, windowEnd, profile?.google_calendar_enabled ?? false),
     ]);
+    // Google busy blocks join the real appointments so both fall out of every day's slots.
+    const appointments = [...appointmentsRaw, ...googleBusy];
 
     // Per weekday, prefer the location-specific schedule, fall back to the global one —
     // same precedence as the single-date getSlots above.
@@ -408,7 +500,12 @@ export class PublicService {
     const [doctor, bookingLocation] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: dto.profileId },
-        select: { is_suspended: true, timezone: true, doctor_profile: { select: { verification_status: true } } },
+        select: {
+          is_suspended: true,
+          timezone: true,
+          google_calendar_enabled: true,
+          doctor_profile: { select: { verification_status: true } },
+        },
       }),
       dto.locationId
         ? this.prisma.locations.findUnique({ where: { id: dto.locationId }, select: { timezone: true } })
@@ -433,6 +530,7 @@ export class PublicService {
 
     await this.validateWithinWorkingHours(dto.profileId, startTime, endTime, timezone, dto.locationId);
     await this.validateNotBlocked(dto.profileId, startTime, endTime, timezone, dto.locationId);
+    await this.validateNotGoogleBusy(dto.profileId, startTime, endTime, doctor.google_calendar_enabled ?? false);
 
     const createAppointment = async () => {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -522,6 +620,35 @@ export class PublicService {
       management_token: appointment.management_token,
       appointment_services: (appointment as any).appointment_services,
     });
+
+    // Push to the doctor's Google Calendar (direction BookPro→Google), fire-and-forget:
+    // a Google failure must never break the booking. The event id is stored so we
+    // can later update/delete on reschedule/cancel.
+    void this.googleCalendar
+      .createEvent(
+        appointment.profile_id,
+        this.buildEventInput({
+          clientName: appointment.client_name,
+          serviceNames,
+          refNumber: appointment.ref_number,
+          clientPhone: appointment.client_phone,
+          notes: appointment.notes,
+          locationName: location?.name,
+          locationAddress: location?.address,
+          start: appointment.start_time,
+          end: appointment.end_time,
+          timeZone: timezone,
+        }),
+      )
+      .then((eventId) => {
+        if (eventId) {
+          return this.prisma.appointments.update({
+            where: { id: appointment.id },
+            data: { google_event_id: eventId },
+          });
+        }
+      })
+      .catch(() => null);
 
     const appUrl = this.config.get<string>("appUrl") ?? "http://localhost:3000";
 
@@ -623,6 +750,11 @@ export class PublicService {
       cancelled_by: "client",
     });
 
+    // Remove the mirrored event from the doctor's Google Calendar (fire-and-forget).
+    if (appt.google_event_id) {
+      void this.googleCalendar.deleteEvent(appt.profile_id, appt.google_event_id).catch(() => null);
+    }
+
     const profile = appt.profiles as any;
     const date = format(appt.start_time, "dd/MM/yyyy");
     const time = format(appt.start_time, "HH:mm");
@@ -667,7 +799,14 @@ export class PublicService {
       include: {
         appointment_services: { include: { service: true } },
         profiles: {
-          select: { email: true, full_name: true, business_name: true, booking_url_slug: true, timezone: true },
+          select: {
+            email: true,
+            full_name: true,
+            business_name: true,
+            booking_url_slug: true,
+            timezone: true,
+            google_calendar_enabled: true,
+          },
         },
       },
     });
@@ -689,6 +828,12 @@ export class PublicService {
 
     await this.validateWithinWorkingHours(appt.profile_id, newStart, newEnd, timezone, appt.location_id ?? undefined);
     await this.validateNotBlocked(appt.profile_id, newStart, newEnd, timezone, appt.location_id ?? undefined);
+    await this.validateNotGoogleBusy(
+      appt.profile_id,
+      newStart,
+      newEnd,
+      appt.profiles?.google_calendar_enabled ?? false,
+    );
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -722,6 +867,26 @@ export class PublicService {
     const businessName = doctor.full_name ?? doctor.business_name ?? "Ο γιατρός σας";
     const appUrl = this.config.get<string>("appUrl") ?? "http://localhost:3000";
     const serviceNames = (appt.appointment_services as any[]).map((as: any) => as.service.name).join(", ");
+
+    // Move the mirrored Google Calendar event to the new time (fire-and-forget).
+    if (appt.google_event_id) {
+      void this.googleCalendar
+        .updateEvent(
+          appt.profile_id,
+          appt.google_event_id,
+          this.buildEventInput({
+            clientName: appt.client_name,
+            serviceNames,
+            refNumber: appt.ref_number,
+            clientPhone: appt.client_phone,
+            notes: appt.notes,
+            start: newStart,
+            end: newEnd,
+            timeZone: timezone,
+          }),
+        )
+        .catch(() => null);
+    }
 
     this.email
       .sendRescheduleNotificationToDoctor({
