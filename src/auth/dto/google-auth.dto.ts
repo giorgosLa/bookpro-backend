@@ -1,22 +1,12 @@
-import { IsEmail, IsString, MinLength, MaxLength, IsEnum, IsOptional, IsIn } from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
-export class SignupDto {
-  @ApiProperty({ example: 'Δρ. Παπαδόπουλος' })
+export class GoogleAuthDto {
+  @ApiProperty({ description: 'Google ID token (JWT credential) from Google Sign-In' })
   @IsString()
-  @MinLength(2)
-  @MaxLength(100)
-  fullName: string;
-
-  @ApiProperty({ example: 'user@example.com' })
-  @IsEmail()
-  email: string;
-
-  @ApiProperty({ example: 'password123', minLength: 8 })
-  @IsString()
-  @MinLength(8)
-  password: string;
+  @IsNotEmpty()
+  idToken: string;
 
   // ADMIN is deliberately excluded — the role is client-supplied, and admin
   // accounts are only ever created by setting role = ADMIN directly in the DB.

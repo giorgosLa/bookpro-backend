@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { GoogleAuthDto } from './dto/google-auth.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from '@/common/decorators/public.decorator';
@@ -35,6 +36,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Login with a Google ID token (existing users only)' })
   googleLogin(@Body('idToken') idToken: string) {
     return this.authService.googleLogin(idToken);
+  }
+
+  @Public()
+  @Post('google/signup')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign up with a Google ID token (signs in if the email already exists)' })
+  googleSignup(@Body() dto: GoogleAuthDto) {
+    return this.authService.googleSignup(dto.idToken, dto.role);
   }
 
   @Public()

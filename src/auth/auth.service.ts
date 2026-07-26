@@ -10,6 +10,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OAuth2Client } from 'google-auth-library';
+import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { PrismaService } from '@/database/prisma.service';
@@ -60,26 +61,7 @@ export class AuthService {
    *   400 bad token    — token invalid or email unverified by Google
    */
   async googleLogin(idToken: string) {
-    if (!idToken) throw new BadRequestException('Missing Google token');
-
-    const clientId = this.config.get<string>('google.clientId');
-    if (!clientId) {
-      this.logger.error('[google-login] GOOGLE_CLIENT_ID not configured');
-      throw new BadRequestException('Google login not configured');
-    }
-
-    let payload: { email?: string; email_verified?: boolean } | undefined;
-    try {
-      const client = new OAuth2Client(clientId);
-      const ticket = await client.verifyIdToken({ idToken, audience: clientId });
-      payload = ticket.getPayload();
-    } catch {
-      throw new BadRequestException('Invalid Google token');
-    }
-
-    if (!payload?.email || payload.email_verified !== true) {
-      throw new BadRequestException('Google email not verified');
-    }
+    const payload = await this.verifyGoogleIdToken(idToken);
 
     const user = await this.prisma.user.findFirst({
       where: { email: { equals: payload.email, mode: 'insensitive' } },
@@ -97,6 +79,99 @@ export class AuthService {
     }
 
     return this.issueTokens(user.id, user.email, user.role);
+  }
+
+  /**
+   * Signs up (or, if the email is already registered, signs in) via a Google ID token.
+   *
+   * Google has already proven ownership of the email, so the account is created
+   * pre-verified — no OTP step. Name and avatar come from the Google profile.
+   * An existing account with the same email is simply signed into, which links
+   * password accounts to Google without creating a duplicate user.
+   *
+   *   403 suspended    — account exists but is suspended
+   *   400 bad token    — token invalid or email unverified by Google
+   */
+  async googleSignup(idToken: string, role: UserRole = 'DOCTOR') {
+    const payload = await this.verifyGoogleIdToken(idToken);
+
+    const existing = await this.prisma.user.findFirst({
+      where: { email: { equals: payload.email, mode: 'insensitive' } },
+      select: { id: true, email: true, role: true, is_suspended: true, emailVerified: true },
+    });
+
+    if (existing) {
+      if (existing.is_suspended) throw new ForbiddenException('Account suspended');
+      if (!existing.emailVerified) {
+        await this.prisma.user.update({
+          where: { id: existing.id },
+          data: { emailVerified: new Date() },
+        });
+      }
+      return {
+        ...this.issueTokens(existing.id, existing.email, existing.role),
+        role: existing.role,
+        created: false,
+      };
+    }
+
+    const fullName = payload.name?.trim() || payload.email.split('@')[0];
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: payload.email.toLowerCase(),
+        full_name: fullName,
+        avatar_url: payload.picture ?? null,
+        booking_url_slug: await this.uniqueSlug(fullName),
+        emailVerified: new Date(),
+        role,
+        ...(role === 'DOCTOR'
+          ? { doctor_profile: { create: {} } }
+          : { patient_profile: { create: {} } }),
+      },
+      select: { id: true, email: true, role: true },
+    });
+
+    return { ...this.issueTokens(user.id, user.email, user.role), role: user.role, created: true };
+  }
+
+  /**
+   * Verifies a Google ID token's signature and audience against our client ID and
+   * requires a Google-verified email. Shared by Google login and Google signup.
+   */
+  private async verifyGoogleIdToken(idToken: string) {
+    if (!idToken) throw new BadRequestException('Missing Google token');
+
+    const clientId = this.config.get<string>('google.clientId');
+    if (!clientId) {
+      this.logger.error('[google-auth] GOOGLE_CLIENT_ID not configured');
+      throw new BadRequestException('Google login not configured');
+    }
+
+    let payload: { email?: string; email_verified?: boolean; name?: string; picture?: string } | undefined;
+    try {
+      const client = new OAuth2Client(clientId);
+      const ticket = await client.verifyIdToken({ idToken, audience: clientId });
+      payload = ticket.getPayload();
+    } catch {
+      throw new BadRequestException('Invalid Google token');
+    }
+
+    if (!payload?.email || payload.email_verified !== true) {
+      throw new BadRequestException('Google email not verified');
+    }
+
+    return payload as { email: string; name?: string; picture?: string };
+  }
+
+  /** Slugifies a name and appends a random 4-digit suffix if the slug is taken. */
+  private async uniqueSlug(name: string): Promise<string> {
+    const baseSlug = name.toLowerCase().trim().replace(/\s+/g, '-');
+    const taken = await this.prisma.user.findUnique({
+      where: { booking_url_slug: baseSlug },
+      select: { id: true },
+    });
+    return taken ? `${baseSlug}-${Math.floor(Math.random() * 9000) + 1000}` : baseSlug;
   }
 
   /**
