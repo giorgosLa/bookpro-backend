@@ -23,7 +23,7 @@ export class AdminService {
   ) {}
 
   async getDoctors(status?: string) {
-    return this.prisma.user.findMany({
+    const doctors = await this.prisma.user.findMany({
       where: {
         role: 'DOCTOR',
         ...(status ? { doctor_profile: { verification_status: status as any } } : {}),
@@ -43,11 +43,22 @@ export class AdminService {
             rejection_reason: true,
             accepts_gessy: true,
             accepts_eopyy: true,
+            phone: true,
+            afm: true,
+            id_photo_url: true,
+            terms_accepted: true,
+            education: true,
+            admin_notes: true,
+            verification_checklist: true,
           },
         },
       },
       orderBy: { created_at: 'desc' },
     });
+
+    // Same completeness rule the approve endpoints enforce — surfaced up front so
+    // the admin sees who is actually approvable before clicking.
+    return doctors.map((d) => ({ ...d, missingFields: this.getMissingProfileFields(d as any) }));
   }
 
   async getStats() {
