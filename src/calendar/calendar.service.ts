@@ -102,8 +102,24 @@ export class CalendarService {
     if (isNaN(timeMin.getTime()) || isNaN(timeMax.getTime())) {
       throw new BadRequestException('Invalid date range');
     }
+
     const items = await this.google.listEvents(userId, timeMin, timeMax);
-    return items.map((e) => ({
+
+    // Exclude events BookPro itself mirrored into Google for its own appointments, so each
+    // appointment shows once (its coloured card on the calendar), not twice. Matched by id
+    // against the DB — robust even if the doctor moved the event to another day.
+    const eventIds = items.map((e) => e.id).filter((id): id is string => Boolean(id));
+    const own = eventIds.length
+      ? await this.prisma.appointments.findMany({
+          where: { profile_id: userId, google_event_id: { in: eventIds } },
+          select: { google_event_id: true },
+        })
+      : [];
+    const ownEventIds = new Set(own.map((a) => a.google_event_id).filter(Boolean) as string[]);
+
+    return items
+      .filter((e) => !e.id || !ownEventIds.has(e.id))
+      .map((e) => ({
       id: e.id,
       summary: e.summary ?? '(χωρίς τίτλο)',
       start: e.start?.dateTime ?? e.start?.date ?? null,

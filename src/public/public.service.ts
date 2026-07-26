@@ -91,22 +91,44 @@ export class PublicService {
     const key = `${profileId}:${windowStart.getTime()}:${windowEnd.getTime()}`;
     const now = Date.now();
     const cached = gcalBusyCache.get(key);
-    if (cached && cached.expiresAt > now) {
-      return cached.data.map((b) => ({ start_time: new Date(b.start), end_time: new Date(b.end) }));
+    let data = cached && cached.expiresAt > now ? cached.data : undefined;
+    if (!data) {
+      const busy = await this.googleCalendar.busyIntervals(profileId, windowStart, windowEnd);
+      data = busy.map((b) => ({ start: b.start.getTime(), end: b.end.getTime(), eventId: b.eventId }));
+      gcalBusyCache.set(key, { data, expiresAt: now + GCAL_BUSY_TTL });
     }
 
-    const busy = await this.googleCalendar.freeBusy(profileId, windowStart, windowEnd);
-    gcalBusyCache.set(key, {
-      data: busy.map((b) => ({ start: b.start.getTime(), end: b.end.getTime() })),
-      expiresAt: now + GCAL_BUSY_TTL,
+    // Drop events BookPro itself mirrored into Google for its own appointments (matched by
+    // stored google_event_id). Otherwise an appointment blocks its slot twice — once via its
+    // DB row, once via its Google event — and a doctor moving that event in Google would knock
+    // out a second, phantom slot. Matched against the DB by id, so it's robust even when the
+    // event was moved to a different day than the appointment's stored time.
+    const own = await this.ownGoogleEventIds(profileId, data);
+    return data
+      .filter((b) => !b.eventId || !own.has(b.eventId))
+      .map((b) => ({ start_time: new Date(b.start), end_time: new Date(b.end) }));
+  }
+
+  /** Of the given Google busy blocks, the set of event ids that mirror this doctor's BookPro appointments. */
+  private async ownGoogleEventIds(
+    profileId: string,
+    busy: { eventId?: string }[],
+  ): Promise<Set<string>> {
+    const eventIds = busy.map((b) => b.eventId).filter((id): id is string => Boolean(id));
+    if (eventIds.length === 0) return new Set();
+    const mine = await this.prisma.appointments.findMany({
+      where: { profile_id: profileId, google_event_id: { in: eventIds } },
+      select: { google_event_id: true },
     });
-    return busy.map((b) => ({ start_time: b.start, end_time: b.end }));
+    return new Set(mine.map((m) => m.google_event_id).filter((id): id is string => Boolean(id)));
   }
 
   /**
    * Authoritative guard: rejects a booking/reschedule that overlaps a Google Calendar
    * busy block. The slot UI already hides these, but a direct API call could target one,
    * so the write path must re-check. Fails open (allows the booking) if Google errors.
+   * (fetchGoogleBusy already excludes the doctor's own mirror events, so a reschedule is
+   * never rejected against its own Google copy.)
    */
   private async validateNotGoogleBusy(profileId: string, start: Date, end: Date, enabled?: boolean) {
     if (enabled === false) return;
@@ -462,6 +484,7 @@ export class PublicService {
       this.fetchGoogleBusy(profileId, windowStart, windowEnd, profile?.google_calendar_enabled ?? false),
     ]);
     // Google busy blocks join the real appointments so both fall out of every day's slots.
+    // (fetchGoogleBusy already drops events BookPro itself mirrored, so no double-blocking.)
     const appointments = [...appointmentsRaw, ...googleBusy];
 
     // Per weekday, prefer the location-specific schedule, fall back to the global one —

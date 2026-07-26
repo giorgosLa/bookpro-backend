@@ -8,6 +8,12 @@ import { PrismaService } from '@/database/prisma.service';
 export interface BusyInterval {
   start: Date;
   end: Date;
+  /**
+   * The Google event id this interval came from (present when derived via events.list).
+   * Lets callers drop events BookPro itself created — matched against a stored
+   * `google_event_id` — so an appointment is never blocked twice.
+   */
+  eventId?: string;
 }
 
 export interface CalendarEventInput {
@@ -188,25 +194,48 @@ export class GoogleCalendarService {
 
   /**
    * Returns the doctor's busy intervals in [timeMin, timeMax] from their Google
-   * calendar. Fails OPEN (empty array) so a Google problem never hides all slots.
+   * calendar. Uses events.list (not the FreeBusy API) specifically so each interval
+   * carries its `eventId` — the caller drops events BookPro itself created, otherwise
+   * an appointment would be blocked both by its own DB row and by its mirror Google
+   * event (and moving that event in Google would block a second, phantom slot).
+   *
+   * Skips cancelled events and those marked "Free" (transparency=transparent), matching
+   * FreeBusy semantics. Fails OPEN (empty array) so a Google problem never hides slots.
    */
-  async freeBusy(userId: string, timeMin: Date, timeMax: Date): Promise<BusyInterval[]> {
+  async busyIntervals(userId: string, timeMin: Date, timeMax: Date): Promise<BusyInterval[]> {
     const authed = await this.authedClient(userId);
     if (!authed) return [];
     try {
-      const res = await this.api(authed.client).freebusy.query({
-        requestBody: {
-          timeMin: timeMin.toISOString(),
-          timeMax: timeMax.toISOString(),
-          items: [{ id: authed.calendarId }],
-        },
+      const res = await this.api(authed.client).events.list({
+        calendarId: authed.calendarId,
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+        maxResults: 250,
       });
-      const busy = res.data.calendars?.[authed.calendarId]?.busy ?? [];
-      return busy
-        .filter((b) => b.start && b.end)
-        .map((b) => ({ start: new Date(b.start as string), end: new Date(b.end as string) }));
+      const out: BusyInterval[] = [];
+      for (const e of res.data.items ?? []) {
+        if (e.status === 'cancelled') continue;
+        if (e.transparency === 'transparent') continue; // marked "Free" — doesn't block
+        if (e.start?.dateTime && e.end?.dateTime) {
+          out.push({
+            start: new Date(e.start.dateTime),
+            end: new Date(e.end.dateTime),
+            eventId: e.id ?? undefined,
+          });
+        } else if (e.start?.date && e.end?.date) {
+          // All-day event → busy for its whole span (as FreeBusy would report it).
+          out.push({
+            start: new Date(`${e.start.date}T00:00:00Z`),
+            end: new Date(`${e.end.date}T00:00:00Z`),
+            eventId: e.id ?? undefined,
+          });
+        }
+      }
+      return out;
     } catch (err) {
-      this.report('freeBusy', userId, err);
+      this.report('busyIntervals', userId, err);
       return [];
     }
   }
