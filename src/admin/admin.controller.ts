@@ -63,6 +63,14 @@ export class AdminController {
     return this.adminService.getDoctors(status);
   }
 
+  // Must stay above `doctors/:id` — otherwise Nest matches the param route first
+  // and ParseUUIDPipe rejects the literal "bookability" with a 400.
+  @Get('doctors/bookability')
+  @ApiOperation({ summary: 'Approved doctors that cannot receive bookings, with the blocking reasons' })
+  getDoctorBookability() {
+    return this.adminService.getDoctorBookability();
+  }
+
   @Get('doctors/:id')
   @ApiOperation({ summary: 'Get doctor detail (appointments, services, working hours)' })
   getDoctorDetail(@Param('id', ParseUUIDPipe) id: string) {

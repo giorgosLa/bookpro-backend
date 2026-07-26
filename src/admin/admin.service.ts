@@ -61,6 +61,117 @@ export class AdminService {
     return doctors.map((d) => ({ ...d, missingFields: this.getMissingProfileFields(d as any) }));
   }
 
+  /**
+   * Approved doctors who cannot actually receive bookings, or who are silently
+   * losing them. Each rule mirrors a real gate in the public booking path:
+   *
+   *  - NO_SLUG          → runDoctorsQuery filters `booking_url_slug: { not: null }`
+   *  - SUSPENDED        → runDoctorsQuery filters `is_suspended: false`
+   *  - NO_SERVICES      → createBooking requires serviceIds; the wizard has nothing to offer
+   *  - NO_WORKING_HOURS → getSlots returns [] when no enabled row matches the weekday
+   *  - NO_DEFAULT_HOURS → getSlots filters `location_id: locationId ?? null`, and the
+   *                       reschedule calendar falls back to `location_id === null` rows.
+   *                       A doctor with per-location hours only leaves every day disabled
+   *                       for patients whose appointment has no location_id.
+   *                       (Search is unaffected — availability-dates-all reads every row.)
+   *  - NO_ACTIVE_LOCATION → bookable, but the patient sees no address or map
+   */
+  async getDoctorBookability() {
+    const doctors = await this.prisma.user.findMany({
+      where: { role: 'DOCTOR', doctor_profile: { verification_status: 'APPROVED' } },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        business_name: true,
+        avatar_url: true,
+        booking_url_slug: true,
+        is_suspended: true,
+        doctor_profile: { select: { specialty: true } },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const ids = doctors.map((d) => d.id);
+    if (ids.length === 0) return { totalApproved: 0, affected: 0, doctors: [] };
+
+    const [hourRows, serviceRows, locationRows] = await Promise.all([
+      this.prisma.working_hours.findMany({
+        where: { profile_id: { in: ids }, is_enabled: true },
+        select: { profile_id: true, location_id: true },
+      }),
+      this.prisma.services.groupBy({
+        by: ['profile_id'],
+        where: { profile_id: { in: ids }, is_active: true },
+        _count: { _all: true },
+      }),
+      this.prisma.locations.groupBy({
+        by: ['profile_id'],
+        where: { profile_id: { in: ids }, is_active: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const hours = new Map<string, { any: boolean; default: boolean }>();
+    for (const row of hourRows) {
+      const entry = hours.get(row.profile_id) ?? { any: false, default: false };
+      entry.any = true;
+      if (row.location_id === null) entry.default = true;
+      hours.set(row.profile_id, entry);
+    }
+    const serviceCount = new Map(serviceRows.map((r) => [r.profile_id, r._count._all]));
+    const locationCount = new Map(locationRows.map((r) => [r.profile_id, r._count._all]));
+
+    const results = doctors.map((doc) => {
+      const h = hours.get(doc.id) ?? { any: false, default: false };
+      const services = serviceCount.get(doc.id) ?? 0;
+      const locations = locationCount.get(doc.id) ?? 0;
+      const issues: { code: string; severity: 'blocking' | 'warning'; label: string }[] = [];
+
+      if (!doc.booking_url_slug) {
+        issues.push({ code: 'NO_SLUG', severity: 'blocking', label: 'Χωρίς booking URL — δεν εμφανίζεται στην αναζήτηση' });
+      }
+      if (doc.is_suspended) {
+        issues.push({ code: 'SUSPENDED', severity: 'blocking', label: 'Εγκεκριμένος αλλά ανεσταλμένος — κρυμμένος από το κοινό' });
+      }
+      if (services === 0) {
+        issues.push({ code: 'NO_SERVICES', severity: 'blocking', label: 'Καμία ενεργή υπηρεσία — δεν μπορεί να κλειστεί ραντεβού' });
+      }
+      if (!h.any) {
+        issues.push({ code: 'NO_WORKING_HOURS', severity: 'blocking', label: 'Κανένα ενεργό ωράριο — μηδέν διαθέσιμα slots' });
+      } else if (!h.default) {
+        issues.push({ code: 'NO_DEFAULT_HOURS', severity: 'warning', label: 'Χωρίς κεντρικό ωράριο — ραντεβού χωρίς τοποθεσία δεν μπορούν να αλλάξουν ημερομηνία' });
+      }
+      if (locations === 0) {
+        issues.push({ code: 'NO_ACTIVE_LOCATION', severity: 'warning', label: 'Καμία ενεργή τοποθεσία — χωρίς διεύθυνση ή χάρτη' });
+      }
+
+      return {
+        id: doc.id,
+        email: doc.email,
+        full_name: doc.full_name,
+        business_name: doc.business_name,
+        avatar_url: doc.avatar_url,
+        booking_url_slug: doc.booking_url_slug,
+        is_suspended: doc.is_suspended,
+        specialty: doc.doctor_profile?.specialty ?? null,
+        counts: { services, locations },
+        issues,
+      };
+    });
+
+    const affected = results.filter((r) => r.issues.length > 0);
+    return {
+      totalApproved: doctors.length,
+      affected: affected.length,
+      // Worst first: blocking issues before warning-only ones.
+      doctors: affected.sort((a, b) => {
+        const blocking = (x: typeof a) => x.issues.filter((i) => i.severity === 'blocking').length;
+        return blocking(b) - blocking(a) || b.issues.length - a.issues.length;
+      }),
+    };
+  }
+
   async getStats() {
     const [
       doctorsPending,
