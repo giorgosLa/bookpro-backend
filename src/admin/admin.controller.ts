@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Put, Delete, Param, Body, Query, UseGuards, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Put, Delete, Param, Body, Query, UseGuards, UseInterceptors, ParseUUIDPipe, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { AdminGuard } from '@/common/guards/admin.guard';
@@ -9,13 +9,30 @@ import { AdminCreateServiceCategoryDto, AdminCreateServiceDto, AdminUpdateServic
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
 import { BulkVerifyDto } from './dto/bulk-verify.dto';
 import { AdminVerificationDto } from './dto/admin-verification.dto';
+import { AuditInterceptor } from './audit.interceptor';
 
 @ApiTags('Admin')
 @ApiBearerAuth()
 @UseGuards(AdminGuard)
+// Controller-wide: every state-changing handler here is recorded, including ones
+// added later. GET requests pass straight through.
+@UseInterceptors(AuditInterceptor)
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Get('audit')
+  @ApiOperation({ summary: 'Admin action history (who did what, to whom, when)' })
+  @ApiQuery({ name: 'action', required: false })
+  @ApiQuery({ name: 'targetId', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  getAuditLog(
+    @Query('action') action?: string,
+    @Query('targetId') targetId?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+  ) {
+    return this.adminService.getAuditLog({ action, targetId, page });
+  }
 
   @Get('stats')
   @ApiOperation({ summary: 'Platform overview stats' })

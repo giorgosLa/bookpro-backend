@@ -172,6 +172,41 @@ export class AdminService {
     };
   }
 
+  private static readonly AUDIT_PAGE_SIZE = 50;
+
+  /** Admin action history, newest first. Written by AuditInterceptor. */
+  async getAuditLog(opts: { action?: string; targetId?: string; page?: number }) {
+    const page = Math.max(1, opts.page ?? 1);
+    const take = AdminService.AUDIT_PAGE_SIZE;
+
+    const where = {
+      ...(opts.action ? { action: opts.action } : {}),
+      ...(opts.targetId ? { target_id: opts.targetId } : {}),
+    };
+
+    const [total, entries, actionGroups] = await Promise.all([
+      this.prisma.adminAuditLog.count({ where }),
+      this.prisma.adminAuditLog.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * take,
+        take,
+      }),
+      // Powers the action filter without a second round-trip.
+      this.prisma.adminAuditLog.groupBy({ by: ['action'], _count: { _all: true } }),
+    ]);
+
+    return {
+      total,
+      page,
+      limit: take,
+      data: entries,
+      actions: actionGroups
+        .map((g) => ({ action: g.action, count: g._count._all }))
+        .sort((a, b) => b.count - a.count),
+    };
+  }
+
   async getStats() {
     const [
       doctorsPending,

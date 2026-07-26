@@ -251,6 +251,36 @@ model DoctorPhoto {
   @@map("doctor_photos")
 }
 
+/// Trail of every state-changing admin action. Written by AuditInterceptor on the
+/// AdminController, so new admin endpoints are covered without extra wiring.
+/// Deliberately NOT a FK to User: the log must survive the deletion of the actor
+/// or of the target it describes.
+model AdminAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actor_id    String   @db.Uuid
+  actor_email String
+  action      String
+  target_type String?
+  target_id   String?
+  /// Human-readable name of the target, resolved at write time — the UUID alone
+  /// is useless once the row it points at is gone.
+  target_label String?
+  summary     String?
+  /// Sanitized request body — secrets stripped before writing.
+  payload     Json?
+  /// State captured before destructive actions (currently user deletion).
+  snapshot    Json?
+  ip          String?
+  user_agent  String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at(sort: Desc)])
+  @@index([actor_id])
+  @@index([target_id])
+  @@index([action])
+  @@map("admin_audit_log")
+}
+
 enum UserRole {
   DOCTOR
   PATIENT
