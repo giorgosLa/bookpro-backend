@@ -19,7 +19,7 @@ import {
   dateStrInTz,
   dayOfWeekInTz,
 } from "@/common/time/tz.util";
-import { computeDaySlots, timeOfDay, dateOnly } from "./slots.helper";
+import { computeDaySlots, timeOfDay, dateOnly, fitsInAnyWindow } from "./slots.helper";
 import { randomBytes } from "crypto";
 
 function generateRefCode(): string {
@@ -364,16 +364,19 @@ export class PublicService {
     const selectedDate = this.parseDate(dateStr);
     const dayOfWeek = selectedDate.getDay();
 
-    // Try location-specific hours first; fall back to global (location_id: null)
-    let wh = await this.prisma.working_hours.findFirst({
+    // A weekday can have several windows (split shift), so this is always a list.
+    // Try location-specific hours first; fall back to global (location_id: null).
+    let windows = await this.prisma.working_hours.findMany({
       where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: locationId ?? null },
+      orderBy: { start_time: "asc" },
     });
-    if (!wh && locationId) {
-      wh = await this.prisma.working_hours.findFirst({
+    if (windows.length === 0 && locationId) {
+      windows = await this.prisma.working_hours.findMany({
         where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
+        orderBy: { start_time: "asc" },
       });
     }
-    if (!wh) return [];
+    if (windows.length === 0) return [];
 
     const [profile, location] = await Promise.all([
       this.prisma.user.findUnique({
@@ -415,7 +418,7 @@ export class PublicService {
 
     return this.computeSlots(
       selectedDate,
-      wh,
+      windows,
       blockedTimes,
       [...appointments, ...googleBusy],
       durationMinutes,
@@ -488,18 +491,23 @@ export class PublicService {
     const appointments = [...appointmentsRaw, ...googleBusy];
 
     // Per weekday, prefer the location-specific schedule, fall back to the global one —
-    // same precedence as the single-date getSlots above.
-    const pickHours = (dow: number) =>
-      (locationId && workingHours.find((w) => w.day_of_week === dow && w.location_id === locationId)) ||
-      workingHours.find((w) => w.day_of_week === dow && w.location_id === null);
+    // same precedence as the single-date getSlots above. Returns ALL of that day's
+    // windows, since a day may be split into a morning and an afternoon shift.
+    const pickHours = (dow: number) => {
+      if (locationId) {
+        const own = workingHours.filter((w) => w.day_of_week === dow && w.location_id === locationId);
+        if (own.length > 0) return own;
+      }
+      return workingHours.filter((w) => w.day_of_week === dow && w.location_id === null);
+    };
 
     const result: Record<string, string[]> = {};
     for (let i = 0; i < days; i++) {
       const d = addDays(startDate, i);
       const dateStr = format(d, "yyyy-MM-dd");
-      const wh = pickHours(d.getDay());
-      result[dateStr] = wh
-        ? this.computeSlots(d, wh, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes)
+      const windows = pickHours(d.getDay());
+      result[dateStr] = windows.length
+        ? this.computeSlots(d, windows, blockedTimes, appointments, durationMinutes, dateStr, timezone, bufferMinutes)
         : [];
     }
     return result;
@@ -989,11 +997,11 @@ export class PublicService {
     const todayStr = todayStrInTz(timezone);
 
     const getSlotsForDate = (d: Date): string[] => {
-      const wh = workingHours.find((w) => w.day_of_week === d.getDay());
-      if (!wh) return [];
+      const windows = workingHours.filter((w) => w.day_of_week === d.getDay());
+      if (windows.length === 0) return [];
       return this.computeSlots(
         d,
-        wh,
+        windows,
         blockedTimes,
         appointments,
         durationMinutes,
@@ -1033,13 +1041,14 @@ export class PublicService {
   }
 
   /**
-   * Core slot computation: generates every 30-minute slot within working hours,
-   * skips slots that overlap with booked appointments or blocked times,
-   * and skips past slots when the requested date is today (Athens timezone).
+   * Core slot computation: generates the slots of every open window on that day
+   * (a weekday can have several — split shift), skips slots that overlap with
+   * booked appointments or blocked times, and skips past slots when the
+   * requested date is today (clinic timezone).
    */
   private computeSlots(
     _date: Date,
-    wh: any,
+    windows: any[],
     blockedTimes: any[],
     appointments: any[],
     duration: number,
@@ -1052,7 +1061,7 @@ export class PublicService {
     return computeDaySlots({
       dateStr,
       tz: timezone,
-      wh,
+      windows,
       blocked: blockedTimes,
       appointments,
       durationMinutes: duration,
@@ -1074,20 +1083,19 @@ export class PublicService {
     const dateStr = dateStrInTz(startTime, timezone);
 
     // Try location-specific hours first; fall back to global (location_id: null)
-    let wh = await this.prisma.working_hours.findFirst({
+    let windows = await this.prisma.working_hours.findMany({
       where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: locationId ?? null },
     });
-    if (!wh && locationId) {
-      wh = await this.prisma.working_hours.findFirst({
+    if (windows.length === 0 && locationId) {
+      windows = await this.prisma.working_hours.findMany({
         where: { profile_id: profileId, day_of_week: dayOfWeek, is_enabled: true, location_id: null },
       });
     }
-    if (!wh) throw new ConflictException("This time slot is no longer available");
+    if (windows.length === 0) throw new ConflictException("This time slot is no longer available");
 
-    const open = wallClockToUtc(dateStr, timeOfDay(wh.start_time), timezone);
-    const close = wallClockToUtc(dateStr, timeOfDay(wh.end_time), timezone);
-
-    if (startTime < open || endTime > close) {
+    // Must fit inside ONE window — a booking may not straddle the gap between
+    // the morning and the afternoon shift.
+    if (!fitsInAnyWindow(windows, dateStr, timezone, startTime.getTime(), endTime.getTime())) {
       throw new ConflictException("This time slot is no longer available");
     }
   }
@@ -1232,10 +1240,10 @@ export class PublicService {
     const result: { date: string; firstSlot: string }[] = [];
     for (let offset = 1; offset <= MAX_DAYS && result.length < limit; offset++) {
       const d = addDays(today, offset);
-      const wh = workingHours.find((w) => w.day_of_week === d.getDay());
-      if (!wh) continue;
+      const windows = workingHours.filter((w) => w.day_of_week === d.getDay());
+      if (windows.length === 0) continue;
       const dateStr = format(d, "yyyy-MM-dd");
-      const slots = this.computeSlots(d, wh, blockedTimes, appointments, duration, dateStr, timezone, bufferMinutes);
+      const slots = this.computeSlots(d, windows, blockedTimes, appointments, duration, dateStr, timezone, bufferMinutes);
       if (slots.length > 0) result.push({ date: dateStr, firstSlot: slots[0] });
     }
 
@@ -1323,10 +1331,10 @@ export class PublicService {
       const dates: { date: string; firstSlot: string }[] = [];
       for (let offset = 1; offset <= MAX_DAYS && dates.length < limit; offset++) {
         const d = addDays(today, offset);
-        const wh = hours.find((w) => w.day_of_week === d.getDay());
-        if (!wh) continue;
+        const windows = hours.filter((w) => w.day_of_week === d.getDay());
+        if (windows.length === 0) continue;
         const dateStr = format(d, "yyyy-MM-dd");
-        const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
+        const slots = this.computeSlots(d, windows, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
         if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
       }
 
@@ -1434,10 +1442,10 @@ export class PublicService {
 
       while (dates.length < limit && offset <= MAX_DAYS) {
         const d = addDays(today, offset++);
-        const wh = hours.find((h) => h.day_of_week === d.getDay());
-        if (!wh) continue;
+        const windows = hours.filter((h) => h.day_of_week === d.getDay());
+        if (windows.length === 0) continue;
         const dateStr = format(d, "yyyy-MM-dd");
-        const slots = this.computeSlots(d, wh, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
+        const slots = this.computeSlots(d, windows, blocked, appointments, duration, dateStr, timezone, bufferMinutes);
         if (slots.length > 0) dates.push({ date: dateStr, firstSlot: slots[0] });
       }
 

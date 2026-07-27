@@ -1,20 +1,25 @@
-import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 import { CreateBlockedTimeDto } from './dto/blocked-time.dto';
 import { invalidateDoctorCaches } from '@/public/cache';
 import { resolveTimezone, wallClockToUtc } from '@/common/time/tz.util';
+import { assertValidScheduleBlocks, toWorkingHourRow, assertBlockedRangeFree } from '@/common/time/schedule.util';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class AvailabilityService {
   constructor(private prisma: PrismaService) {}
 
-  /** Returns the doctor's global weekly working hours (no location), ordered Mon–Sun (0=Sun). */
+  /**
+   * Returns the doctor's global weekly working hours (no location), ordered
+   * Mon–Sun (0=Sun) and, within a day, by start time — a day can hold several
+   * windows (split shift).
+   */
   getSchedule(userId: string) {
     return this.prisma.working_hours.findMany({
       where: { profile_id: userId, location_id: null },
-      orderBy: { day_of_week: 'asc' },
+      orderBy: [{ day_of_week: 'asc' }, { start_time: 'asc' }],
     });
   }
 
@@ -23,16 +28,15 @@ export class AvailabilityService {
    * Only touches hours where location_id IS NULL — never deletes location-specific hours.
    */
   async updateSchedule(userId: string, dto: UpdateAvailabilityDto) {
+    assertValidScheduleBlocks(dto.schedule);
+
     await this.prisma.$transaction(async (tx) => {
       await tx.working_hours.deleteMany({ where: { profile_id: userId, location_id: null } });
       await tx.working_hours.createMany({
-        data: dto.schedule.map((s) => ({
+        data: dto.schedule.map((s, i) => ({
           id: uuidv4(),
           profile_id: userId,
-          day_of_week: s.dayOfWeek,
-          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
-          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
-          is_enabled: s.isEnabled,
+          ...toWorkingHourRow(s, i),
         })),
       });
     });
@@ -52,19 +56,13 @@ export class AvailabilityService {
 
   /** Blocks a specific time range on a date (e.g. lunch break, holiday). */
   async createBlockedTime(userId: string, dto: CreateBlockedTimeDto) {
-    if (dto.endTime <= dto.startTime) {
-      throw new BadRequestException('End time must be after start time');
-    }
-
-    // At most ONE global blocked time per date — changing it is an edit, not a second block.
+    // A date may hold several blocks (one break per shift), as long as they don't overlap.
     const date = new Date(dto.date);
-    const existing = await this.prisma.blocked_time.findFirst({
+    const existing = await this.prisma.blocked_time.findMany({
       where: { profile_id: userId, location_id: null, date },
-      select: { id: true },
+      select: { start_time: true, end_time: true },
     });
-    if (existing) {
-      throw new ConflictException('This day already has a blocked time — edit it instead');
-    }
+    assertBlockedRangeFree(existing, dto.startTime, dto.endTime);
 
     const result = await this.prisma.blocked_time.create({
       data: {

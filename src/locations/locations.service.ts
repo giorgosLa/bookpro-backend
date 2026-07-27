@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@/database/prisma.service';
 import { v4 as uuidv4 } from 'uuid';
 import { invalidateDoctorCaches } from '@/public/cache';
 import { resolveTimezone, wallClockToUtc } from '@/common/time/tz.util';
+import { assertValidScheduleBlocks, toWorkingHourRow, assertBlockedRangeFree } from '@/common/time/schedule.util';
 import { CreateLocationDto, UpdateLocationDto } from './dto/create-location.dto';
 import {
   AddLocationServiceDto,
@@ -33,7 +34,7 @@ export class LocationsService {
           include: { service: { select: { id: true, name: true, price: true, duration_minutes: true } } },
           orderBy: { created_at: 'asc' },
         },
-        working_hours: { orderBy: { day_of_week: 'asc' } },
+        working_hours: { orderBy: [{ day_of_week: 'asc' }, { start_time: 'asc' }] },
       },
       orderBy: [{ order: 'asc' }, { created_at: 'asc' }],
     });
@@ -88,23 +89,22 @@ export class LocationsService {
     await this.assertOwnership(userId, locationId);
     return this.prisma.working_hours.findMany({
       where: { location_id: locationId },
-      orderBy: { day_of_week: 'asc' },
+      orderBy: [{ day_of_week: 'asc' }, { start_time: 'asc' }],
     });
   }
 
   async updateSchedule(userId: string, locationId: string, dto: UpdateLocationScheduleDto) {
     await this.assertOwnership(userId, locationId);
+    assertValidScheduleBlocks(dto.schedule);
+
     await this.prisma.$transaction(async (tx) => {
       await tx.working_hours.deleteMany({ where: { location_id: locationId } });
       await tx.working_hours.createMany({
-        data: dto.schedule.map((s) => ({
+        data: dto.schedule.map((s, i) => ({
           id: uuidv4(),
           profile_id: userId,
           location_id: locationId,
-          day_of_week: s.dayOfWeek,
-          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
-          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
-          is_enabled: s.isEnabled,
+          ...toWorkingHourRow(s, i),
         })),
       });
     });
@@ -123,8 +123,8 @@ export class LocationsService {
   }
 
   /**
-   * A location may hold at most ONE blocked time per date — changing it is an edit,
-   * never a second block. `excludeId` skips the row being edited.
+   * A date may hold several blocked times (one break per shift), as long as they
+   * don't overlap. `excludeId` skips the row being edited.
    */
   private async assertValidBlockedRange(
     locationId: string,
@@ -133,16 +133,11 @@ export class LocationsService {
     endTime: string,
     excludeId?: string,
   ) {
-    if (endTime <= startTime) {
-      throw new BadRequestException('End time must be after start time');
-    }
-    const existing = await this.prisma.blocked_time.findFirst({
+    const existing = await this.prisma.blocked_time.findMany({
       where: { location_id: locationId, date, ...(excludeId ? { id: { not: excludeId } } : {}) },
-      select: { id: true },
+      select: { start_time: true, end_time: true },
     });
-    if (existing) {
-      throw new ConflictException('This day already has a blocked time — edit it instead');
-    }
+    assertBlockedRangeFree(existing, startTime, endTime);
   }
 
   /**
@@ -204,9 +199,9 @@ export class LocationsService {
   }
 
   /**
-   * The only way to change a day's blocked hours (a date holds at most one block).
-   * Sets the range exactly as given — so it can also shrink a block — without ever
-   * unblocking the slot in between.
+   * Changes one block's hours in place. Sets the range exactly as given — so it can
+   * also shrink a block — without ever unblocking the slot in between. The date is
+   * immutable: moving a block to another day is a delete + create.
    */
   async updateBlockedTime(
     userId: string,

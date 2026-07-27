@@ -44,6 +44,7 @@ export class UpdateLocationServiceDto {
   isActive?: boolean;
 }
 
+/** One open window. Several entries may share the same dayOfWeek (split shift). */
 export class ScheduleItemDto {
   @IsInt()
   @Min(0)
@@ -51,13 +52,22 @@ export class ScheduleItemDto {
   dayOfWeek: number;
 
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'startTime must be HH:MM' })
   startTime: string;
 
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'endTime must be HH:MM' })
   endTime: string;
 
   @IsBoolean()
   isEnabled: boolean;
+
+  @ApiPropertyOptional({ example: 30, description: 'Minutes between slot starts. Omit for the 30-min default.' })
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(480)
+  slotIntervalMinutes?: number;
 }
 
 export class UpdateLocationScheduleDto {

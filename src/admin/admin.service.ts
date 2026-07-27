@@ -13,6 +13,7 @@ import { AdminCreateServiceCategoryDto, AdminCreateServiceDto, AdminUpdateServic
 import { AdminAppointmentsQueryDto } from './dto/admin-appointments-query.dto';
 import { BulkVerifyDto } from './dto/bulk-verify.dto';
 import { AdminVerificationDto } from './dto/admin-verification.dto';
+import { assertValidScheduleBlocks, toWorkingHourRow } from '@/common/time/schedule.util';
 
 @Injectable()
 export class AdminService {
@@ -289,7 +290,7 @@ export class AdminService {
         where: { id: doctorId },
         include: {
           doctor_profile: true,
-          working_hours: { orderBy: { day_of_week: 'asc' } },
+          working_hours: { orderBy: [{ day_of_week: 'asc' }, { start_time: 'asc' }] },
         },
       }),
       this.prisma.appointments.count({ where: { profile_id: doctorId } }),
@@ -311,7 +312,7 @@ export class AdminService {
       this.prisma.locations.findMany({
         where: { profile_id: doctorId },
         include: {
-          working_hours: { orderBy: { day_of_week: 'asc' } },
+          working_hours: { orderBy: [{ day_of_week: 'asc' }, { start_time: 'asc' }] },
           location_services: {
             where: { is_active: true },
             include: {
@@ -782,17 +783,15 @@ export class AdminService {
 
   async updateDoctorSchedule(doctorId: string, dto: AdminUpdateScheduleDto) {
     await this.assertDoctor(doctorId);
+    assertValidScheduleBlocks(dto.schedule);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.working_hours.deleteMany({ where: { profile_id: doctorId } });
       await tx.working_hours.createMany({
-        data: dto.schedule.map((s) => ({
+        data: dto.schedule.map((s, i) => ({
           id: uuidv4(),
           profile_id: doctorId,
-          day_of_week: s.dayOfWeek,
-          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
-          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
-          is_enabled: s.isEnabled,
+          ...toWorkingHourRow(s, i),
         })),
       });
     });
@@ -1008,18 +1007,16 @@ export class AdminService {
     const loc = await this.prisma.locations.findUnique({ where: { id: locationId }, select: { profile_id: true } });
     if (!loc) throw new NotFoundException('Location not found');
     if (loc.profile_id !== doctorId) throw new ForbiddenException();
+    assertValidScheduleBlocks(dto.schedule);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.working_hours.deleteMany({ where: { profile_id: doctorId, location_id: locationId } });
       await tx.working_hours.createMany({
-        data: dto.schedule.map((s) => ({
+        data: dto.schedule.map((s, i) => ({
           id: uuidv4(),
           profile_id: doctorId,
           location_id: locationId,
-          day_of_week: s.dayOfWeek,
-          start_time: new Date(`1970-01-01T${s.startTime}:00Z`),
-          end_time: new Date(`1970-01-01T${s.endTime}:00Z`),
-          is_enabled: s.isEnabled,
+          ...toWorkingHourRow(s, i),
         })),
       });
     });
