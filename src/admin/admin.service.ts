@@ -140,7 +140,7 @@ export class AdminService {
       if (!h.any) {
         issues.push({ code: 'NO_WORKING_HOURS', severity: 'blocking', label: 'Κανένα ενεργό ωράριο — μηδέν διαθέσιμα slots' });
       } else if (!h.default) {
-        issues.push({ code: 'NO_DEFAULT_HOURS', severity: 'warning', label: 'Χωρίς κεντρικό ωράριο — ραντεβού χωρίς τοποθεσία δεν μπορούν να αλλάξουν ημερομηνία' });
+        issues.push({ code: 'NO_DEFAULT_HOURS', severity: 'warning', label: 'Ωράριο μόνο ανά κλινική — ραντεβού χωρίς κλινική δεν μπορεί να αλλάξει ημερομηνία' });
       }
       if (locations === 0) {
         issues.push({ code: 'NO_ACTIVE_LOCATION', severity: 'warning', label: 'Καμία ενεργή τοποθεσία — χωρίς διεύθυνση ή χάρτη' });
@@ -179,9 +179,21 @@ export class AdminService {
     const page = Math.max(1, opts.page ?? 1);
     const take = AdminService.AUDIT_PAGE_SIZE;
 
+    // Bulk actions carry no target_id — their targets live in the snapshot array
+    // ([{id, name}, …]). Match both so a doctor's history includes the bulk
+    // approve/reject that swept them up.
+    const targetScope = opts.targetId
+      ? {
+          OR: [
+            { target_id: opts.targetId },
+            { snapshot: { array_contains: [{ id: opts.targetId }] } },
+          ],
+        }
+      : {};
+
     const where = {
+      ...targetScope,
       ...(opts.action ? { action: opts.action } : {}),
-      ...(opts.targetId ? { target_id: opts.targetId } : {}),
     };
 
     const [total, entries, actionGroups] = await Promise.all([
@@ -192,8 +204,13 @@ export class AdminService {
         skip: (page - 1) * take,
         take,
       }),
-      // Powers the action filter without a second round-trip.
-      this.prisma.adminAuditLog.groupBy({ by: ['action'], _count: { _all: true } }),
+      // Powers the action dropdown. Scoped to the target but NOT to the selected
+      // action, so the other options stay switchable.
+      this.prisma.adminAuditLog.groupBy({
+        by: ['action'],
+        where: targetScope,
+        _count: { _all: true },
+      }),
     ]);
 
     return {
@@ -444,6 +461,7 @@ export class AdminService {
             },
           },
           appointment_services: { include: { service: { select: { id: true, name: true, price: true, duration_minutes: true } } } },
+          location: { select: { id: true, name: true, address: true } },
         },
         orderBy: { start_time: 'desc' },
         skip: (page - 1) * limit,
@@ -454,7 +472,17 @@ export class AdminService {
     return { data, total, page, limit };
   }
 
+  static readonly APPOINTMENT_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'] as const;
+
   async updateAdminAppointmentStatus(appointmentId: string, status: string) {
+    // The column is a free-form String in the schema, so the allow-list is enforced
+    // here — otherwise any typo becomes a status nothing in the app knows how to render.
+    if (!(AdminService.APPOINTMENT_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(
+        `Invalid status "${status}". Expected one of: ${AdminService.APPOINTMENT_STATUSES.join(', ')}`,
+      );
+    }
+
     const appt = await this.prisma.appointments.findUnique({
       where: { id: appointmentId },
       select: { id: true },
@@ -827,6 +855,8 @@ export class AdminService {
         ...(dto.priceMax !== undefined && { price_max: dto.priceMax }),
         ...(dto.durationMinutes !== undefined && { duration_minutes: dto.durationMinutes }),
         ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+        // `null` moves the service out of its category; omitted leaves it as-is.
+        ...(dto.categoryId !== undefined && { category_id: dto.categoryId }),
         updated_at: new Date(),
       },
       select: { id: true, name: true, duration_minutes: true, price: true, price_min: true, price_max: true, description: true, is_active: true, category_id: true },

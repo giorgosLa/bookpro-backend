@@ -1,5 +1,5 @@
-import { IsString, IsOptional, IsNumber, IsPositive, Min, Max, MaxLength, IsBoolean, IsUUID } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import { IsString, IsOptional, IsNumber, IsPositive, Min, Max, MaxLength, IsBoolean, IsUUID, ValidateIf } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional, PartialType, OmitType } from '@nestjs/swagger';
 
 export class AdminCreateServiceCategoryDto {
   @ApiProperty({ example: 'Εξετάσεις' })
@@ -50,11 +50,48 @@ export class AdminCreateServiceDto {
   categoryId?: string;
 }
 
-export class AdminUpdateServiceDto extends PartialType(AdminCreateServiceDto) {
+/** Skips validation for an explicit null, so `null` passes through as "clear this". */
+const SkipIfNull = () =>
+  ValidateIf((_obj: unknown, value: unknown) => value !== null);
+
+// The price fields are omitted from the base and re-declared as nullable: switching
+// a service from a price range back to a fixed price has to CLEAR price_min/price_max,
+// and an omitted field leaves the old value in the DB. `null` is the erase signal.
+export class AdminUpdateServiceDto extends PartialType(
+  OmitType(AdminCreateServiceDto, ['price', 'priceMin', 'priceMax', 'categoryId'] as const),
+) {
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /** `null` removes the service from its category. */
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @SkipIfNull()
+  @IsUUID()
+  categoryId?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @SkipIfNull()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  price?: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @SkipIfNull()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  priceMin?: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @SkipIfNull()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  priceMax?: number | null;
 }
 
 export class AdminAddLocationServiceDto {
