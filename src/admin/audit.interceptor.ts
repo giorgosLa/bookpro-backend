@@ -36,6 +36,10 @@ const ACTIONS: Record<string, ActionMeta> = {
   updateLocationService:       { action: 'location_service.update',   targetType: 'doctor' },
   removeLocationService:       { action: 'location_service.remove',   targetType: 'doctor' },
   updateDoctorLocationSchedule:{ action: 'location.schedule_replace', targetType: 'doctor' },
+  open:                        { action: 'verification.open',          targetType: 'doctor' },
+  saveProgress:                { action: 'verification.progress',      targetType: 'doctor' },
+  recordCheck:                 { action: 'verification.check',         targetType: 'doctor' },
+  decide:                      { action: 'verification.decision',      targetType: 'doctor' },
 };
 
 /** Never persist these, whatever endpoint they arrive on. */
@@ -217,6 +221,20 @@ export class AuditInterceptor implements NestInterceptor {
         return `${body?.status === 'APPROVED' ? 'Μαζική έγκριση' : 'Μαζική απόρριψη'} ${body?.ids?.length ?? 0} γιατρών${body?.reason ? ` — ${body.reason}` : ''}`;
       case 'appointment.status':
         return `Νέα κατάσταση: "${body?.status ?? '—'}"`;
+      case 'verification.decision': {
+        const labels: Record<string, string> = {
+          APPROVED: 'Εγκρίθηκε',
+          REJECTED: 'Απορρίφθηκε',
+          NEEDS_MORE_INFO: 'Ζητήθηκαν συμπληρωματικά',
+          REVOKED: 'Ανακλήθηκε',
+        };
+        const label = labels[body?.status] ?? body?.status ?? '—';
+        return body?.reason ? `${label} — ${body.reason}` : label;
+      }
+      case 'verification.check':
+        return body?.kind === 'PHONE'
+          ? `Τηλεφωνική επιβεβαίωση${body?.number ? ` στο ${body.number}` : ''}`
+          : `Έλεγχος μητρώου${body?.source ? ` — ${body.source}` : ''}`;
       case 'service.create':
       case 'location.create':
         return body?.name ? `"${body.name}"` : null;

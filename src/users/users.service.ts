@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import { PrismaService } from '@/database/prisma.service';
@@ -40,32 +40,31 @@ export class UsersService {
       if (conflict) throw new ConflictException('This URL slug is already taken');
     }
 
-    // Strip identity fields that are immutable while PENDING or APPROVED.
+    // Strip identity fields that are immutable once a dossier is with an admin.
     const currentProfile = await this.prisma.user.findUnique({
       where: { id },
-      select: { role: true, doctor_profile: { select: { verification_status: true, terms_accepted: true } } },
+      select: { role: true, doctor_profile: { select: { verification_status: true } } },
     });
     const verificationStatus = currentProfile?.doctor_profile?.verification_status;
     const isDoctor = currentProfile?.role === 'DOCTOR';
-    const isUnderReview = verificationStatus === 'PENDING' && currentProfile?.doctor_profile?.terms_accepted;
+    const isUnderReview = verificationStatus === 'PENDING' || verificationStatus === 'IN_REVIEW';
 
     if (isDoctor && (verificationStatus === 'APPROVED' || isUnderReview)) {
       const d = dto as Record<string, unknown>;
-      // Locked while under review (submitted + PENDING) or after APPROVED
       delete d['fullName'];
       delete d['specialty'];
       delete d['medicalAssociationNumber'];
+      delete d['ghsProviderId'];
       delete d['idPhotoUrl'];
       delete d['termsAccepted'];
     }
     if (isDoctor && verificationStatus === 'APPROVED') {
       const d = dto as Record<string, unknown>;
-      // Additionally locked only after APPROVED
       delete d['afm'];
       delete d['termsAccepted'];
     }
 
-    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.medicalAssociationNumber, dto.afm, dto.idPhotoUrl, dto.termsAccepted, dto.doctorPhone, dto.education, dto.doctorGender].some(
+    const hasDoctorFields = [dto.specialty, dto.acceptsGessy, dto.acceptsEopyy, dto.latitude, dto.longitude, dto.medicalAssociationNumber, dto.ghsProviderId, dto.afm, dto.idPhotoUrl, dto.termsAccepted, dto.doctorPhone, dto.education, dto.doctorGender].some(
       (v) => v !== undefined,
     );
     const hasPatientFields = [dto.phone, dto.dateOfBirth, dto.gender, dto.amka, dto.eopyyNumber, dto.gessyNumber, dto.bloodType, dto.allergies].some(
@@ -80,8 +79,8 @@ export class UsersService {
           latitude: dto.latitude,
           longitude: dto.longitude,
           medical_association_number: dto.medicalAssociationNumber,
+          ghs_provider_id: dto.ghsProviderId,
           afm: dto.afm,
-          id_photo_url: dto.idPhotoUrl,
           // terms_accepted is only set via POST /users/me/resubmit, never via regular profile update
           phone: dto.doctorPhone,
           education: dto.education,
@@ -123,18 +122,6 @@ export class UsersService {
 
     invalidateDoctorCaches(id);
     return this.sanitize(updated);
-  }
-
-  async resubmitVerification(userId: string) {
-    const profile = await this.prisma.doctorProfile.findUnique({ where: { user_id: userId } });
-    if (!profile) throw new NotFoundException('Doctor profile not found');
-    if (profile.verification_status === 'APPROVED') {
-      throw new BadRequestException('Your profile is already approved');
-    }
-    return this.prisma.doctorProfile.update({
-      where: { user_id: userId },
-      data: { verification_status: 'PENDING', rejection_reason: null, terms_accepted: true, updated_at: new Date() },
-    });
   }
 
   async getClinicPhotos(userId: string) {
@@ -184,37 +171,6 @@ export class UsersService {
     await this.prisma.doctorPhoto.delete({ where: { id: photoId } });
     invalidateDoctorCaches(userId);
     return { success: true };
-  }
-
-  async uploadIdPhoto(userId: string, imageData: string): Promise<{ idPhotoUrl: string }> {
-    const profile = await this.prisma.doctorProfile.findUnique({
-      where: { user_id: userId },
-      select: { verification_status: true, terms_accepted: true },
-    });
-    const isUnderReview = profile?.verification_status === 'PENDING' && profile?.terms_accepted;
-    if (profile?.verification_status === 'APPROVED' || isUnderReview) {
-      throw new ForbiddenException('Identity documents cannot be changed while under review or after approval');
-    }
-
-    if (imageData.length > 8 * 1024 * 1024) {
-      throw new BadRequestException('Image is too large. Please choose a smaller image.');
-    }
-
-    const result = await cloudinary.uploader.upload(imageData, {
-      public_id: `bookpro/id-photos/${userId}`,
-      overwrite: true,
-      invalidate: true,
-      resource_type: 'image',
-    });
-
-    const baseUrl = result.secure_url.replace(/\?.*$/, '');
-
-    await this.prisma.doctorProfile.update({
-      where: { user_id: userId },
-      data: { id_photo_url: baseUrl, updated_at: new Date() },
-    });
-
-    return { idPhotoUrl: baseUrl };
   }
 
   async uploadAvatar(userId: string, imageData: string): Promise<{ avatarUrl: string }> {

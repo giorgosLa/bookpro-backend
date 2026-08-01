@@ -500,6 +500,35 @@ export class EmailService {
     });
   }
 
+  async sendDoctorNeedsInfo(opts: { to: string; name: string; reason: string; appUrl: string }) {
+    return this.send({
+      to: opts.to,
+      subject: 'Χρειαζόμαστε κάτι ακόμη – BookPro',
+      html: this.layout(`
+        <div style="padding:32px 32px 0">
+          <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#94a3b8">BookPro</p>
+          <h1 style="margin:0 0 20px;font-size:22px;font-weight:800;color:#0f172a;line-height:1.2">
+            Χρειαζόμαστε<br>κάτι ακόμη
+          </h1>
+          <p style="margin:0 0 20px;font-size:15px;color:#64748b;line-height:1.6">
+            Γεια σας <strong style="color:#0f172a">${opts.name}</strong>,
+            η αίτησή σας είναι σχεδόν έτοιμη. Λείπει μόνο ένα πράγμα για να ολοκληρωθεί ο έλεγχος.
+          </p>
+          <div style="background:#f8fafc;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+            <p style="margin:0;font-size:13px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em">Τι χρειαζόμαστε</p>
+            <p style="margin:6px 0 0;font-size:14px;color:#475569">${opts.reason}</p>
+          </div>
+          <p style="margin:0 0 28px;font-size:14px;color:#64748b;line-height:1.6">
+            Τα υπόλοιπα στοιχεία σας παραμένουν αποθηκευμένα — δεν χρειάζεται να τα ανεβάσετε ξανά.
+          </p>
+        </div>
+        <div style="padding:0 32px 32px">
+          ${this.btn('Ολοκλήρωση αίτησης', `${opts.appUrl}/dashboard?view=verification`)}
+        </div>
+      `),
+    });
+  }
+
   async sendEmailOtp(opts: { to: string; name: string; otp: string }) {
     return this.send({
       to: opts.to,

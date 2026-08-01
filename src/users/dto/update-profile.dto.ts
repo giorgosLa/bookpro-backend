@@ -78,10 +78,20 @@ export class UpdateProfileDto {
   @MaxLength(50)
   medicalAssociationNumber?: string;
 
-  @ApiPropertyOptional({ example: '12345678' })
+  @ApiPropertyOptional({ example: 'GHS-004512', description: 'Αριθμός παρόχου ΓεΣΥ' })
   @IsOptional()
   @IsString()
-  @Matches(/^\d{8}$/, { message: 'Το ΑΦΜ πρέπει να αποτελείται από ακριβώς 8 ψηφία' })
+  @MaxLength(50)
+  ghsProviderId?: string;
+
+  @ApiPropertyOptional({ example: '12345678X', description: 'ΑΦΤ Κύπρου (8 ψηφία + γράμμα) ή ελληνικό ΑΦΜ (9 ψηφία)' })
+  @IsOptional()
+  @IsString()
+  // The check letter is optional so the four pre-Cyprus rows that hold a bare
+  // 8-digit value can still be saved without a forced edit.
+  @Matches(/^(\d{8}[A-Z]?|\d{9})$/, {
+    message: 'Το ΑΦΤ έχει 8 ψηφία και ένα γράμμα (π.χ. 12345678X). Το ελληνικό ΑΦΜ έχει 9 ψηφία.',
+  })
   afm?: string;
 
   @ApiPropertyOptional()

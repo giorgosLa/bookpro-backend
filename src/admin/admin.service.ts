@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { UserRole, VerificationStatus } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { subDays, startOfDay } from 'date-fns';
 import { PrismaService } from '@/database/prisma.service';
@@ -40,6 +40,7 @@ export class AdminService {
           select: {
             specialty: true,
             medical_association_number: true,
+            ghs_provider_id: true,
             verification_status: true,
             rejection_reason: true,
             accepts_gessy: true,
@@ -363,6 +364,7 @@ export class AdminService {
             specialty: true,
             phone: true,
             medical_association_number: true,
+            ghs_provider_id: true,
             afm: true,
             id_photo_url: true,
             terms_accepted: true,
@@ -392,6 +394,8 @@ export class AdminService {
       },
     });
 
+    await this.recordDecisionOnSubmission(doctor.doctor_profile.id, dto.status, dto.reason ?? null);
+
     if (dto.status === 'APPROVED') {
       this.email.sendDoctorApproved({ to: doctor.email, name, appUrl }).catch(() => {});
     } else if (dto.status === 'REJECTED') {
@@ -400,6 +404,37 @@ export class AdminService {
 
     invalidateDoctorCaches(doctorId); // verification status controls public visibility
     return updated;
+  }
+
+  // Quick approve/reject from the list views bypasses the dossier screen, but the
+  // decision must still land in the history table — an approval nobody can trace
+  // is exactly what that table exists to prevent.
+  private async recordDecisionOnSubmission(
+    doctorProfileId: string,
+    status: VerificationStatus,
+    reason: string | null,
+  ) {
+    const now = new Date();
+    const latest = await this.prisma.verificationSubmission.findFirst({
+      where: { doctor_profile_id: doctorProfileId },
+      orderBy: [{ submitted_at: 'desc' }, { created_at: 'desc' }],
+      select: { id: true },
+    });
+
+    const data = {
+      status,
+      reviewed_at: now,
+      decision_reason: reason,
+      updated_at: now,
+    };
+
+    if (latest) {
+      await this.prisma.verificationSubmission.update({ where: { id: latest.id }, data });
+    } else {
+      await this.prisma.verificationSubmission.create({
+        data: { doctor_profile_id: doctorProfileId, submitted_at: now, ...data },
+      });
+    }
   }
 
   async suspendUser(userId: string, suspend: boolean) {
@@ -659,6 +694,7 @@ export class AdminService {
             specialty: true,
             phone: true,
             medical_association_number: true,
+            ghs_provider_id: true,
             afm: true,
             id_photo_url: true,
             terms_accepted: true,
@@ -722,23 +758,20 @@ export class AdminService {
       specialty: string | null;
       phone: string | null;
       medical_association_number: string | null;
+      ghs_provider_id: string | null;
       afm: string | null;
-      id_photo_url: string | null;
       terms_accepted: boolean | null;
       education: string | null;
     } | null;
   }): string[] {
     const dp = doctor.doctor_profile;
     const missing: string[] = [];
-    if (!doctor.avatar_url) missing.push('Φωτογραφία προφίλ');
     if (!doctor.full_name) missing.push('Πλήρες όνομα');
     if (!dp?.specialty) missing.push('Ειδικότητα');
     if (!dp?.phone) missing.push('Τηλέφωνο');
-    if (!dp?.medical_association_number) missing.push('ΑΜ Ιατρικού Συλλόγου');
-    if (!dp?.afm) missing.push('ΑΦΜ');
-    if (!dp?.id_photo_url) missing.push('Φωτογραφία ταυτότητας');
-    if (!dp?.terms_accepted) missing.push('Αποδοχή όρων χρήσης');
-    if (!dp?.education) missing.push('Τίτλοι σπουδών');
+    if (!dp?.medical_association_number && !dp?.ghs_provider_id) {
+      missing.push('Αριθμός μητρώου ή ΓεΣΥ');
+    }
     return missing;
   }
 

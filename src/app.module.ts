@@ -16,6 +16,7 @@ import { EventsModule } from './events/events.module';
 import { AdminModule } from './admin/admin.module';
 import { LocationsModule } from './locations/locations.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { VerificationModule } from './verification/verification.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -37,6 +38,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     AdminModule,
     LocationsModule,
     CalendarModule,
+    VerificationModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

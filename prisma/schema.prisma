@@ -1,5 +1,5 @@
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -7,17 +7,17 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(uuid()) @db.Uuid
-  email         String    @unique
-  emailVerified DateTime?
-  password      String?
-  role          UserRole  @default(DOCTOR)
-  full_name     String?
-  business_name String?
-  bio           String?
-  address       String?
-  avatar_url    String?
-  timezone      String?   @default("Europe/Athens")
+  id                         String    @id @default(uuid()) @db.Uuid
+  email                      String    @unique
+  emailVerified              DateTime?
+  password                   String?
+  role                       UserRole  @default(DOCTOR)
+  full_name                  String?
+  business_name              String?
+  bio                        String?
+  address                    String?
+  avatar_url                 String?
+  timezone                   String?   @default("Europe/Athens")
   booking_url_slug           String?   @unique
   buffer_minutes             Int       @default(0)
   google_calendar_enabled    Boolean?  @default(false)
@@ -39,18 +39,18 @@ model User {
   created_at                 DateTime  @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime  @default(now()) @db.Timestamptz(6)
 
-  appointments          appointments[]
-  patient_appointments  appointments[]    @relation("PatientAppointments")
-  blocked_time          blocked_time[]
-  services              services[]
-  working_hours         working_hours[]
-  service_categories    service_categories[]
-  locations             locations[]
-  doctor_profile        DoctorProfile?
-  patient_profile       PatientProfile?
-  doctor_reviews        Review[]          @relation("DoctorReviews")
-  patient_reviews       Review[]          @relation("PatientReviews")
-  doctor_photos         DoctorPhoto[]
+  appointments         appointments[]
+  patient_appointments appointments[]       @relation("PatientAppointments")
+  blocked_time         blocked_time[]
+  services             services[]
+  working_hours        working_hours[]
+  service_categories   service_categories[]
+  locations            locations[]
+  doctor_profile       DoctorProfile?
+  patient_profile      PatientProfile?
+  doctor_reviews       Review[]             @relation("DoctorReviews")
+  patient_reviews      Review[]             @relation("PatientReviews")
+  doctor_photos        DoctorPhoto[]
 
   @@map("profiles")
 }
@@ -65,29 +65,29 @@ model VerificationToken {
 }
 
 model appointments {
-  id                    String         @id @db.Uuid
-  ref_number            String         @unique
-  profile_id            String         @db.Uuid
-  patient_id            String?        @db.Uuid
-  location_id           String?        @db.Uuid
-  client_name           String
-  client_email          String
-  client_phone          String?
-  client_timezone       String?
-  start_time            DateTime       @db.Timestamptz(6)
-  end_time              DateTime       @db.Timestamptz(6)
-  status                String         @default("pending")
-  cancelled_by          String?
-  notes                 String?
-  google_event_id       String?
-  management_token      String         @unique @db.Uuid
-  created_at            DateTime       @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime       @default(now()) @db.Timestamptz(6)
+  id               String   @id @db.Uuid
+  ref_number       String   @unique
+  profile_id       String   @db.Uuid
+  patient_id       String?  @db.Uuid
+  location_id      String?  @db.Uuid
+  client_name      String
+  client_email     String
+  client_phone     String?
+  client_timezone  String?
+  start_time       DateTime @db.Timestamptz(6)
+  end_time         DateTime @db.Timestamptz(6)
+  status           String   @default("pending")
+  cancelled_by     String?
+  notes            String?
+  google_event_id  String?
+  management_token String   @unique @db.Uuid
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
 
-  profiles             User                 @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  patient              User?                @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
+  profiles             User                   @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  patient              User?                  @relation("PatientAppointments", fields: [patient_id], references: [id], onDelete: SetNull)
   appointment_services appointment_services[]
-  location             locations?           @relation(fields: [location_id], references: [id], onDelete: SetNull)
+  location             locations?             @relation(fields: [location_id], references: [id], onDelete: SetNull)
   review               Review?
 
   @@index([profile_id, start_time])
@@ -110,21 +110,21 @@ model appointment_services {
 }
 
 model services {
-  id               String              @id @db.Uuid
-  profile_id       String              @db.Uuid
-  description      String?
-  price            Decimal?            @db.Decimal
-  price_min        Decimal?            @db.Decimal
-  price_max        Decimal?            @db.Decimal
-  is_active        Boolean             @default(true)
-  created_at       DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
-  duration_minutes Int                 @default(30)
-  name             String
-  category_id      String?             @db.Uuid
+  id                   String                 @id @db.Uuid
+  profile_id           String                 @db.Uuid
+  description          String?
+  price                Decimal?               @db.Decimal
+  price_min            Decimal?               @db.Decimal
+  price_max            Decimal?               @db.Decimal
+  is_active            Boolean                @default(true)
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @db.Timestamptz(6)
+  duration_minutes     Int                    @default(30)
+  name                 String
+  category_id          String?                @db.Uuid
   appointment_services appointment_services[]
-  profiles             User                @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  service_category     service_categories? @relation(fields: [category_id], references: [id], onDelete: SetNull)
+  profiles             User                   @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  service_category     service_categories?    @relation(fields: [category_id], references: [id], onDelete: SetNull)
   location_services    location_services[]
 
   @@index([profile_id])
@@ -147,20 +147,20 @@ model service_categories {
 /// One open window on a weekday. A day may hold SEVERAL rows (split shift:
 /// morning + afternoon) — never assume one row per (profile, location, day).
 model working_hours {
-  id          String     @id @db.Uuid
-  profile_id  String     @db.Uuid
-  location_id String?    @db.Uuid
-  day_of_week Int
-  start_time  DateTime   @db.Time(6)
-  end_time    DateTime   @db.Time(6)
-  is_enabled  Boolean    @default(true)
+  id                    String     @id @db.Uuid
+  profile_id            String     @db.Uuid
+  location_id           String?    @db.Uuid
+  day_of_week           Int
+  start_time            DateTime   @db.Time(6)
+  end_time              DateTime   @db.Time(6)
+  is_enabled            Boolean    @default(true)
   /// Minutes between consecutive bookable slots in this window. Null = 30 (the default step).
   slot_interval_minutes Int?
   /// Display/creation order of the windows within a day.
-  order       Int        @default(0)
-  created_at  DateTime   @default(now()) @db.Timestamptz(6)
-  profiles    User       @relation(fields: [profile_id], references: [id], onDelete: Cascade)
-  location    locations? @relation(fields: [location_id], references: [id], onDelete: Cascade)
+  order                 Int        @default(0)
+  created_at            DateTime   @default(now()) @db.Timestamptz(6)
+  profiles              User       @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  location              locations? @relation(fields: [location_id], references: [id], onDelete: Cascade)
 
   @@index([profile_id, day_of_week, is_enabled])
   @@index([location_id])
@@ -262,23 +262,23 @@ model DoctorPhoto {
 /// Deliberately NOT a FK to User: the log must survive the deletion of the actor
 /// or of the target it describes.
 model AdminAuditLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  actor_id    String   @db.Uuid
-  actor_email String
-  action      String
-  target_type String?
-  target_id   String?
+  id           String   @id @default(uuid()) @db.Uuid
+  actor_id     String   @db.Uuid
+  actor_email  String
+  action       String
+  target_type  String?
+  target_id    String?
   /// Human-readable name of the target, resolved at write time — the UUID alone
   /// is useless once the row it points at is gone.
   target_label String?
-  summary     String?
+  summary      String?
   /// Sanitized request body — secrets stripped before writing.
-  payload     Json?
+  payload      Json?
   /// State captured before destructive actions (currently user deletion).
-  snapshot    Json?
-  ip          String?
-  user_agent  String?
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  snapshot     Json?
+  ip           String?
+  user_agent   String?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([created_at(sort: Desc)])
   @@index([actor_id])
@@ -337,34 +337,119 @@ enum MedicalSpecialty {
 }
 
 enum VerificationStatus {
+  DRAFT
   PENDING
+  IN_REVIEW
+  NEEDS_MORE_INFO
   APPROVED
+  REJECTED
+  EXPIRED
+  REVOKED
+}
+
+enum VerificationDocumentType {
+  REGISTRATION_CERTIFICATE
+  ID_FRONT
+  ID_BACK
+  DEGREE
+  SPECIALTY_TITLE
+  GHS_CONTRACT
+  MALPRACTICE_INSURANCE
+  OTHER
+}
+
+enum VerificationDocumentStatus {
+  PENDING
+  ACCEPTED
   REJECTED
 }
 
+model VerificationSubmission {
+  id                String             @id @default(uuid()) @db.Uuid
+  doctor_profile_id String             @db.Uuid
+  status            VerificationStatus @default(DRAFT)
+
+  submitted_at      DateTime? @db.Timestamptz(6)
+  reviewed_at       DateTime? @db.Timestamptz(6)
+  reviewed_by_id    String?   @db.Uuid
+  reviewed_by_email String?
+  decision_reason   String?
+  admin_notes       String?
+  checklist         Json?
+
+  phone_verified_at     DateTime? @db.Timestamptz(6)
+  phone_verified_number String?   @db.VarChar(30)
+  phone_verified_note   String?
+
+  registry_checked_at DateTime? @db.Timestamptz(6)
+  registry_source     String?   @db.VarChar(60)
+  registry_note       String?
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  doctor_profile DoctorProfile          @relation(fields: [doctor_profile_id], references: [id], onDelete: Cascade)
+  documents      VerificationDocument[]
+
+  @@index([doctor_profile_id])
+  @@index([status])
+  @@index([submitted_at(sort: Desc)])
+  @@map("verification_submissions")
+}
+
+model VerificationDocument {
+  id            String                     @id @default(uuid()) @db.Uuid
+  submission_id String                     @db.Uuid
+  type          VerificationDocumentType
+  status        VerificationDocumentStatus @default(PENDING)
+
+  storage_key       String  @db.VarChar(500)
+  resource_type     String  @default("image") @db.VarChar(20)
+  format            String? @db.VarChar(10)
+  original_filename String? @db.VarChar(255)
+  bytes             Int?
+  sha256            String? @db.VarChar(64)
+
+  reviewer_note String?
+  expires_at    DateTime? @db.Date
+
+  uploaded_at DateTime  @default(now()) @db.Timestamptz(6)
+  purged_at   DateTime? @db.Timestamptz(6)
+
+  submission VerificationSubmission @relation(fields: [submission_id], references: [id], onDelete: Cascade)
+
+  @@index([submission_id])
+  @@index([sha256])
+  @@map("verification_documents")
+}
+
 model DoctorProfile {
-  id                  String             @id @default(uuid()) @db.Uuid
-  user_id             String             @unique @db.Uuid
-  specialty           MedicalSpecialty?
-  latitude            Float?
-  longitude           Float?
-  accepts_gessy       Boolean            @default(false)
-  accepts_eopyy       Boolean            @default(false)
+  id                         String             @id @default(uuid()) @db.Uuid
+  user_id                    String             @unique @db.Uuid
+  specialty                  MedicalSpecialty?
+  latitude                   Float?
+  longitude                  Float?
+  accepts_gessy              Boolean            @default(false)
+  accepts_eopyy              Boolean            @default(false)
   medical_association_number String?            @db.VarChar(50)
+  ghs_provider_id            String?            @db.VarChar(50)
   afm                        String?            @db.VarChar(15)
   id_photo_url               String?            @db.VarChar(500)
   terms_accepted             Boolean            @default(false)
   phone                      String?            @db.VarChar(30)
   education                  String?            @db.VarChar(500)
   gender                     Gender?
-  verification_status        VerificationStatus @default(PENDING)
+  verification_status        VerificationStatus @default(DRAFT)
   rejection_reason           String?
   admin_notes                String?
   verification_checklist     Json?
-  created_at             DateTime           @default(now()) @db.Timestamptz(6)
-  updated_at             DateTime           @default(now()) @db.Timestamptz(6)
+  verified_at                DateTime?          @db.Timestamptz(6)
+  verification_expires_at    DateTime?          @db.Timestamptz(6)
+  created_at                 DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime           @default(now()) @db.Timestamptz(6)
 
-  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user        User                     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  submissions VerificationSubmission[]
 
   @@map("doctor_profiles")
 }

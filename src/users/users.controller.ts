@@ -24,22 +24,10 @@ export class UsersController {
     return this.usersService.update(user.id, dto);
   }
 
-  @Post('me/resubmit')
-  @ApiOperation({ summary: 'Re-submit doctor profile for verification after rejection' })
-  resubmit(@CurrentUser() user: { id: string }) {
-    return this.usersService.resubmitVerification(user.id);
-  }
-
   @Post('me/avatar')
   @ApiOperation({ summary: 'Upload avatar photo (base64) — stored on Cloudinary' })
   uploadAvatar(@CurrentUser() user: { id: string }, @Body() dto: UploadAvatarDto) {
     return this.usersService.uploadAvatar(user.id, dto.imageData);
-  }
-
-  @Post('me/id-photo')
-  @ApiOperation({ summary: 'Upload ID photo (base64) — stored on Cloudinary' })
-  uploadIdPhoto(@CurrentUser() user: { id: string }, @Body() dto: UploadAvatarDto) {
-    return this.usersService.uploadIdPhoto(user.id, dto.imageData);
   }
 
   @Get('me/photos')

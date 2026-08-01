@@ -14,7 +14,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
-    "seed:doctors": "ts-node prisma/seed-doctors.ts"
+    "seed:doctors": "ts-node prisma/seed-doctors.ts",
+    "purge:legacy-id-photos": "ts-node scripts/purge-legacy-id-photos.ts"
   },
   "dependencies": {
     "@fastify/compress": "^6.5.0",
